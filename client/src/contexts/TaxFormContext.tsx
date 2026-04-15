@@ -29,6 +29,7 @@ import {
 // ─── Steps ───────────────────────────────────────────────────────────
 
 export const STEPS = [
+  { id: "import", label: "Import Statement", number: "00" },
   { id: "assessee", label: "Assessee Details", number: "01" },
   { id: "salary", label: "Salary Income", number: "02" },
   { id: "house-property", label: "House Property", number: "03" },

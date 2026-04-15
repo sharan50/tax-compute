@@ -298,7 +298,7 @@ export default function ComputationStep() {
                   key={label}
                   variant="outline"
                   size="sm"
-                  onClick={() => goToStep(i)}
+                  onClick={() => goToStep(i + 1)}
                   className="text-xs"
                 >
                   Edit {label}
