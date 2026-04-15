@@ -1,0 +1,20 @@
+# Tax Compute — TODO
+
+- [x] Core tax computation engine (New Regime, FY 2024-25 & 2025-26)
+- [x] Swiss Financial design system (typography, colors, layout)
+- [x] Multi-step form: Assessee Details
+- [x] Multi-step form: Salary Income
+- [x] Multi-step form: House Property (multiple properties)
+- [x] Multi-step form: Capital Gains (STCG/LTCG at all rates)
+- [x] Multi-step form: Other Sources (interest, dividends, etc.)
+- [x] Multi-step form: TDS & Taxes Paid
+- [x] Computation results page with full breakdown
+- [x] Print / Save PDF functionality
+- [x] Tax engine validated against real CA computation (zero difference)
+- [x] Bank statement import — HDFC Excel parser
+- [x] Rule-based transaction categorisation
+- [x] Upgrade to full-stack (web-db-user) for backend capabilities
+- [x] Backend LLM triage endpoint (Forge API)
+- [x] Frontend AI triage UI (classify button, review banner, AI tags)
+- [x] Write vitest tests for triage endpoint
+- [x] End-to-end testing and polish

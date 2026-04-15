@@ -4,12 +4,16 @@
  * Step 00 (optional): Import bank statement Excel file.
  * Parses the file, shows categorised summary, lets user
  * confirm/reclassify, then auto-populates the form.
+ * 
+ * Includes AI-powered triage for ambiguous transactions
+ * via the backend Forge LLM endpoint.
  */
 
 import { useState, useCallback, useRef } from "react";
 import { useTaxForm } from "@/contexts/TaxFormContext";
 import SectionHeader from "@/components/SectionHeader";
 import { Button } from "@/components/ui/button";
+import { trpc } from "@/lib/trpc";
 import {
   parseStatement,
   CATEGORY_LABELS,
@@ -30,10 +34,38 @@ import {
   Loader2,
   X,
   Shield,
+  Sparkles,
+  RotateCcw,
 } from "lucide-react";
 import { toast } from "sonner";
 
-type ImportPhase = "upload" | "parsing" | "review" | "done";
+type ImportPhase = "upload" | "parsing" | "review" | "triaging" | "done";
+
+// Helper to rebuild tax summary from transactions
+function rebuildTaxSummary(transactions: ParsedTransaction[]): StatementSummary["taxSummary"] {
+  const byCategory = (cat: TransactionCategory) => transactions.filter(t => t.category === cat);
+  const sumDeposits = (txns: ParsedTransaction[]) => txns.reduce((s, t) => s + t.deposit, 0);
+  const sumWithdrawals = (txns: ParsedTransaction[]) => txns.reduce((s, t) => s + t.withdrawal, 0);
+
+  return {
+    totalSalary: sumDeposits(byCategory("salary")),
+    salaryTransactions: byCategory("salary"),
+    totalBankInterest: sumDeposits(byCategory("bank_interest")),
+    interestTransactions: byCategory("bank_interest"),
+    totalFDInterest: sumDeposits(byCategory("fd_interest")),
+    fdInterestTransactions: byCategory("fd_interest"),
+    totalDividends: sumDeposits(byCategory("dividend")),
+    dividendTransactions: byCategory("dividend"),
+    totalRentReceived: sumDeposits(byCategory("rent_received")),
+    rentTransactions: byCategory("rent_received"),
+    totalTDS: sumWithdrawals(byCategory("tds")),
+    tdsTransactions: byCategory("tds"),
+    totalTaxRefund: sumDeposits(byCategory("tax_refund")),
+    taxRefundTransactions: byCategory("tax_refund"),
+    totalOtherIncome: sumDeposits(byCategory("other_income")),
+    otherIncomeTransactions: byCategory("other_income"),
+  };
+}
 
 export default function ImportStep() {
   const { dispatch, nextStep } = useTaxForm();
@@ -42,7 +74,11 @@ export default function ImportStep() {
   const [error, setError] = useState<string | null>(null);
   const [expandedCategories, setExpandedCategories] = useState<Set<string>>(new Set());
   const [fileName, setFileName] = useState<string>("");
+  const [aiTriaged, setAiTriaged] = useState(false);
+  const [aiChanges, setAiChanges] = useState<number>(0);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const triageMutation = trpc.triage.classify.useMutation();
 
   const handleFileSelect = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -51,6 +87,8 @@ export default function ImportStep() {
     setFileName(file.name);
     setError(null);
     setPhase("parsing");
+    setAiTriaged(false);
+    setAiChanges(0);
 
     try {
       const result = await parseStatement(file);
@@ -72,6 +110,95 @@ export default function ImportStep() {
       return next;
     });
   };
+
+  // ─── AI Triage Handler ───────────────────────────────────────────
+  const handleAiTriage = useCallback(async () => {
+    if (!summary) return;
+
+    // Find transactions that are low-confidence or uncategorised
+    const ambiguous = summary.transactions.filter(
+      t => t.confidence === "low" || t.category === "uncategorised" || t.category === "other_income"
+    );
+
+    if (ambiguous.length === 0) {
+      toast.info("All transactions are already classified with high confidence.");
+      return;
+    }
+
+    setPhase("triaging");
+
+    try {
+      const result = await triageMutation.mutateAsync({
+        transactions: ambiguous.map(t => ({
+          id: t.id,
+          date: t.date,
+          narration: t.narration,
+          withdrawal: t.withdrawal,
+          deposit: t.deposit,
+        })),
+        accountHolder: summary.accountHolder,
+        bankName: summary.bankName,
+      });
+
+      if (result.classifications && result.classifications.length > 0) {
+        // Apply AI classifications to the transactions
+        type AiClassification = {
+          id: string;
+          category: string;
+          taxRelevant: boolean;
+          confidence: string;
+          notes: string;
+        };
+        const classMap = new Map(
+          (result.classifications as AiClassification[]).map(c => [c.id, c])
+        );
+
+        let changes = 0;
+        const updatedTransactions = summary.transactions.map(t => {
+          const aiClass = classMap.get(t.id);
+          if (aiClass && aiClass.category !== t.category) {
+            changes++;
+            return {
+              ...t,
+              category: aiClass.category as TransactionCategory,
+              confidence: aiClass.confidence as "high" | "medium" | "low",
+              taxRelevant: aiClass.taxRelevant,
+              notes: `AI: ${aiClass.notes}`,
+            };
+          }
+          return t;
+        });
+
+        // Rebuild the summary with updated transactions
+        const updatedSummary: StatementSummary = {
+          ...summary,
+          transactions: updatedTransactions,
+          taxSummary: rebuildTaxSummary(updatedTransactions),
+        };
+
+        setSummary(updatedSummary);
+        setAiTriaged(true);
+        setAiChanges(changes);
+        setPhase("review");
+
+        if (changes > 0) {
+          toast.success(`AI reclassified ${changes} transaction${changes > 1 ? "s" : ""}. Review the updated categories below.`);
+        } else {
+          toast.info("AI agrees with the current classifications. No changes made.");
+        }
+      } else {
+        setPhase("review");
+        if (result.error) {
+          toast.error(`AI triage failed: ${result.error}`);
+        } else {
+          toast.info("AI returned no reclassifications.");
+        }
+      }
+    } catch (err) {
+      setPhase("review");
+      toast.error(err instanceof Error ? err.message : "AI triage failed");
+    }
+  }, [summary, triageMutation]);
 
   const handleApply = useCallback(() => {
     if (!summary) return;
@@ -131,8 +258,17 @@ export default function ImportStep() {
     setPhase("upload");
     setError(null);
     setFileName("");
+    setAiTriaged(false);
+    setAiChanges(0);
     if (fileInputRef.current) fileInputRef.current.value = "";
   };
+
+  // Count ambiguous transactions
+  const ambiguousCount = summary
+    ? summary.transactions.filter(
+        t => t.confidence === "low" || t.category === "uncategorised" || t.category === "other_income"
+      ).length
+    : 0;
 
   return (
     <div>
@@ -146,8 +282,8 @@ export default function ImportStep() {
       <div className="flex items-start gap-3 p-4 bg-secondary/50 rounded-md mb-8 max-w-2xl">
         <Shield className="w-4 h-4 text-primary mt-0.5 shrink-0" />
         <p className="text-xs text-muted-foreground leading-relaxed">
-          All processing happens locally in your browser. No data is uploaded to any server.
-          Your financial information never leaves this device.
+          Statement parsing happens locally in your browser. AI classification sends only 
+          ambiguous transaction narrations to the server for analysis — no full statement data is transmitted.
         </p>
       </div>
 
@@ -205,6 +341,17 @@ export default function ImportStep() {
         </div>
       )}
 
+      {/* AI Triaging Phase */}
+      {phase === "triaging" && (
+        <div className="max-w-2xl text-center py-16">
+          <Sparkles className="w-8 h-8 animate-pulse text-primary mx-auto mb-4" />
+          <p className="font-display text-sm font-semibold">AI is classifying transactions...</p>
+          <p className="text-xs text-muted-foreground mt-1">
+            Analysing {ambiguousCount} ambiguous transaction{ambiguousCount !== 1 ? "s" : ""} with LLM
+          </p>
+        </div>
+      )}
+
       {/* Review Phase */}
       {phase === "review" && summary && (
         <div className="max-w-3xl">
@@ -225,6 +372,59 @@ export default function ImportStep() {
               </button>
             </div>
           </div>
+
+          {/* AI Triage Banner */}
+          {ambiguousCount > 0 && !aiTriaged && (
+            <div className="p-4 bg-primary/5 border border-primary/20 rounded-lg mb-6">
+              <div className="flex items-start gap-3">
+                <Sparkles className="w-5 h-5 text-primary mt-0.5 shrink-0" />
+                <div className="flex-1">
+                  <p className="text-sm font-semibold text-foreground mb-1">
+                    {ambiguousCount} transaction{ambiguousCount !== 1 ? "s" : ""} need{ambiguousCount === 1 ? "s" : ""} review
+                  </p>
+                  <p className="text-xs text-muted-foreground mb-3">
+                    Rule-based classification couldn't confidently categorise some transactions. 
+                    Use AI to analyse the narrations and suggest better categories.
+                  </p>
+                  <Button
+                    size="sm"
+                    onClick={handleAiTriage}
+                    disabled={triageMutation.isPending}
+                    className="font-display"
+                  >
+                    <Sparkles className="w-3.5 h-3.5 mr-1.5" />
+                    AI Classify
+                  </Button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* AI Triage Result Banner */}
+          {aiTriaged && (
+            <div className="p-4 bg-emerald-50 border border-emerald-200 rounded-lg mb-6">
+              <div className="flex items-start gap-3">
+                <CheckCircle2 className="w-5 h-5 text-emerald-600 mt-0.5 shrink-0" />
+                <div className="flex-1">
+                  <p className="text-sm font-semibold text-emerald-900 mb-1">
+                    AI classification complete
+                  </p>
+                  <p className="text-xs text-emerald-700">
+                    {aiChanges > 0
+                      ? `${aiChanges} transaction${aiChanges > 1 ? "s" : ""} reclassified. Review the updated categories below before applying.`
+                      : "AI agrees with all current classifications. No changes were needed."}
+                  </p>
+                  <button
+                    onClick={() => { setAiTriaged(false); setAiChanges(0); }}
+                    className="text-xs text-emerald-600 hover:underline mt-2 flex items-center gap-1"
+                  >
+                    <RotateCcw className="w-3 h-3" />
+                    Run again
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
 
           {/* Tax-Relevant Summary */}
           <h3 className="font-display text-xs font-semibold uppercase tracking-widest text-muted-foreground mb-4">
@@ -316,6 +516,16 @@ export default function ImportStep() {
               <CheckCircle2 className="w-4 h-4 mr-2" />
               Apply to Form
             </Button>
+            {ambiguousCount > 0 && !aiTriaged && (
+              <Button
+                variant="outline"
+                onClick={handleAiTriage}
+                disabled={triageMutation.isPending}
+              >
+                <Sparkles className="w-4 h-4 mr-2" />
+                AI Classify First
+              </Button>
+            )}
             <Button variant="outline" onClick={handleReset}>
               <X className="w-4 h-4 mr-2" />
               Cancel
@@ -339,6 +549,7 @@ export default function ImportStep() {
             <p className="text-xs text-muted-foreground mb-6">
               {summary.bankName} · {summary.transactions.length} transactions processed · 
               {summary.transactions.filter(t => t.taxRelevant).length} tax-relevant items extracted
+              {aiTriaged ? ` · AI-assisted` : ""}
             </p>
 
             <div className="grid grid-cols-2 gap-4 max-w-md mx-auto mb-6 text-left">
@@ -454,6 +665,11 @@ function SummaryRow({
                 <div className="flex items-baseline gap-2 min-w-0 flex-1">
                   <span className="text-muted-foreground font-mono shrink-0">{txn.date}</span>
                   <span className="truncate text-foreground">{txn.narration}</span>
+                  {txn.notes.startsWith("AI:") && (
+                    <span className="shrink-0 text-[10px] px-1.5 py-0.5 rounded bg-primary/10 text-primary font-mono">
+                      AI
+                    </span>
+                  )}
                 </div>
                 <span className="font-mono tabular-nums shrink-0 ml-3">
                   ₹{formatINR(isWithdrawal ? txn.withdrawal : txn.deposit)}
@@ -470,7 +686,6 @@ function SummaryRow({
 // ─── Helpers ─────────────────────────────────────────────────────────
 
 function extractDeductorName(narration: string): string {
-  // Try to extract a meaningful name from the narration
   if (narration.includes("NSDL")) return "Income Tax Department";
   const parts = narration.split("-");
   if (parts.length > 1) return parts[1].trim().substring(0, 40);
