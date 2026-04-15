@@ -4,13 +4,14 @@
  * Step 07: Final tax computation output.
  * Mirrors the format of a CA's computation sheet.
  * Full-width, dense, tabular layout.
+ * Now includes marginal relief details.
  */
 
 import { useTaxForm } from "@/contexts/TaxFormContext";
 import SectionHeader from "@/components/SectionHeader";
 import { formatINR } from "@/lib/taxEngine";
 import { Button } from "@/components/ui/button";
-import { FileDown, RotateCcw } from "lucide-react";
+import { FileDown, RotateCcw, Info } from "lucide-react";
 
 function Row({
   label,
@@ -22,6 +23,7 @@ function Row({
   muted = false,
   border = false,
   doubleBorder = false,
+  note,
 }: {
   label: string;
   amount: number | string;
@@ -32,29 +34,38 @@ function Row({
   muted?: boolean;
   border?: boolean;
   doubleBorder?: boolean;
+  note?: string;
 }) {
   const displayAmount = typeof amount === "string" ? amount : formatINR(amount as number);
   return (
-    <div
-      className={`flex justify-between items-baseline py-1.5 ${
-        border ? "border-t border-border" : ""
-      } ${doubleBorder ? "border-t-2 border-foreground" : ""}`}
-      style={{ paddingLeft: `${indent * 20}px` }}
-    >
-      <span
-        className={`text-sm ${bold ? "font-semibold" : ""} ${
-          muted ? "text-muted-foreground" : ""
-        }`}
+    <div>
+      <div
+        className={`flex justify-between items-baseline py-1.5 ${
+          border ? "border-t border-border" : ""
+        } ${doubleBorder ? "border-t-2 border-foreground" : ""}`}
+        style={{ paddingLeft: `${indent * 20}px` }}
       >
-        {label}
-      </span>
-      <span
-        className={`font-mono tabular-nums text-sm ${bold ? "font-semibold" : ""} ${
-          accent ? "text-primary font-semibold" : ""
-        } ${negative ? "text-destructive" : ""}`}
-      >
-        {negative && typeof amount === "number" && amount > 0 ? `(${displayAmount})` : displayAmount}
-      </span>
+        <span
+          className={`text-sm ${bold ? "font-semibold" : ""} ${
+            muted ? "text-muted-foreground" : ""
+          }`}
+        >
+          {label}
+        </span>
+        <span
+          className={`font-mono tabular-nums text-sm ${bold ? "font-semibold" : ""} ${
+            accent ? "text-primary font-semibold" : ""
+          } ${negative ? "text-destructive" : ""}`}
+        >
+          {negative && typeof amount === "number" && amount > 0 ? `(${displayAmount})` : displayAmount}
+        </span>
+      </div>
+      {note && (
+        <div className="flex items-start gap-1.5 pb-1" style={{ paddingLeft: `${(indent + 1) * 20}px` }}>
+          <Info className="w-3 h-3 text-muted-foreground mt-0.5 shrink-0" />
+          <span className="text-xs text-muted-foreground italic">{note}</span>
+        </div>
+      )}
     </div>
   );
 }
@@ -105,6 +116,10 @@ export default function ComputationStep() {
     dispatch({ type: "RESET" });
   };
 
+  const hasMarginalReliefOnRebate = c.rebate87AMarginalRelief > 0;
+  const hasMarginalReliefOnSurcharge = c.surchargeMarginalRelief > 0;
+  const hasSpecialRateTax = c.taxOnSTCG111A_20 > 0 || c.taxOnSTCG111A_15 > 0 || c.taxOnLTCG112A_125 > 0 || c.taxOnLTCG112A_10 > 0;
+
   return (
     <div>
       <SectionHeader
@@ -127,6 +142,30 @@ export default function ComputationStep() {
           Start Over
         </Button>
       </div>
+
+      {/* Marginal Relief Banner */}
+      {(hasMarginalReliefOnRebate || hasMarginalReliefOnSurcharge) && (
+        <div className="mb-6 p-4 rounded-md bg-primary/5 border border-primary/20 print:bg-white print:border-gray-300">
+          <div className="flex items-start gap-2">
+            <Info className="w-4 h-4 text-primary mt-0.5 shrink-0" />
+            <div>
+              <p className="text-sm font-semibold text-primary">Marginal Relief Applied</p>
+              {hasMarginalReliefOnRebate && (
+                <p className="text-xs text-muted-foreground mt-1">
+                  Rebate u/s 87A marginal relief of ₹{formatINR(c.rebate87AMarginalRelief)} applied — 
+                  tax capped so it does not exceed the income above ₹12,00,000.
+                </p>
+              )}
+              {hasMarginalReliefOnSurcharge && (
+                <p className="text-xs text-muted-foreground mt-1">
+                  Surcharge marginal relief of ₹{formatINR(c.surchargeMarginalRelief)} applied — 
+                  tax + surcharge capped so it does not exceed the tax at the lower surcharge threshold plus the excess income.
+                </p>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Computation Sheet */}
       <div className="max-w-3xl" id="computation-sheet">
@@ -161,9 +200,7 @@ export default function ComputationStep() {
         <Row label="Gross Total Income" amount={c.grossTotalIncome} bold border />
         
         {c.totalDeductions > 0 && (
-          <>
-            <Row label="Less: Deductions" amount={c.totalDeductions} negative indent={1} />
-          </>
+          <Row label="Less: Deductions" amount={c.totalDeductions} negative indent={1} />
         )}
         
         <Row label="Total Income" amount={c.totalIncome} bold accent border />
@@ -191,7 +228,7 @@ export default function ComputationStep() {
         <Row label="Tax on Normal Income" amount={c.taxOnNormalIncome} bold border />
 
         {/* Special Rate Taxes */}
-        {(c.taxOnSTCG111A_20 > 0 || c.taxOnSTCG111A_15 > 0 || c.taxOnLTCG112A_125 > 0 || c.taxOnLTCG112A_10 > 0) && (
+        {hasSpecialRateTax && (
           <>
             <SectionTitle title="Tax on Special Rate Income" />
             {c.taxOnSTCG111A_20 > 0 && (
@@ -213,7 +250,16 @@ export default function ComputationStep() {
 
         {/* Rebate */}
         {c.rebate87A > 0 && (
-          <Row label="Less: Rebate u/s 87A" amount={c.rebate87A} negative indent={1} />
+          <Row
+            label="Less: Rebate u/s 87A"
+            amount={c.rebate87A}
+            negative
+            indent={1}
+            note={hasMarginalReliefOnRebate
+              ? `Includes marginal relief of ₹${formatINR(c.rebate87AMarginalRelief)} — tax capped at excess over ₹12,00,000`
+              : undefined
+            }
+          />
         )}
         
         {c.rebate87A > 0 && (
@@ -221,17 +267,60 @@ export default function ComputationStep() {
         )}
 
         {/* Surcharge */}
-        {c.surchargeAmount > 0 && (
-          <Row
-            label={`Add: Surcharge @ ${(c.surchargeRate * 100).toFixed(0)}%`}
-            amount={c.surchargeAmount}
-            indent={1}
-          />
-        )}
-        
-        {c.surchargeAmount > 0 && (
-          <Row label="Tax after Surcharge" amount={c.taxAfterSurcharge} border />
-        )}
+        {c.surchargeAmount > 0 || c.surchargeBeforeMarginalRelief > 0 ? (
+          <>
+            {hasMarginalReliefOnSurcharge ? (
+              <>
+                {/* Show surcharge before and after marginal relief */}
+                <Row
+                  label={`Surcharge @ ${(c.surchargeRate * 100).toFixed(0)}% (before marginal relief)`}
+                  amount={c.surchargeBeforeMarginalRelief}
+                  indent={1}
+                  muted
+                />
+                <Row
+                  label="Less: Surcharge Marginal Relief"
+                  amount={c.surchargeMarginalRelief}
+                  negative
+                  indent={1}
+                  note="Tax + surcharge capped at: tax at lower threshold + excess income over threshold"
+                />
+                <Row
+                  label="Net Surcharge"
+                  amount={c.surchargeAmount}
+                  indent={1}
+                  bold
+                />
+              </>
+            ) : (
+              <>
+                {/* Split surcharge display when both normal and CG surcharge exist */}
+                {c.surchargeOnNormal > 0 && c.surchargeOnCG > 0 ? (
+                  <>
+                    <Row
+                      label={`Surcharge on Normal Income @ ${(c.surchargeRate * 100).toFixed(0)}%`}
+                      amount={c.surchargeOnNormal}
+                      indent={1}
+                    />
+                    <Row
+                      label={`Surcharge on Capital Gains @ ${Math.min(c.surchargeRate * 100, 15).toFixed(0)}%`}
+                      amount={c.surchargeOnCG}
+                      indent={1}
+                    />
+                  </>
+                ) : (
+                  <Row
+                    label={`Add: Surcharge @ ${(c.surchargeRate * 100).toFixed(0)}%`}
+                    amount={c.surchargeAmount}
+                    indent={1}
+                  />
+                )}
+              </>
+            )}
+            
+            <Row label="Tax after Surcharge" amount={c.taxAfterSurcharge} border />
+          </>
+        ) : null}
 
         {/* Cess */}
         <Row
@@ -269,7 +358,7 @@ export default function ComputationStep() {
           ) : c.refundDue > 0 ? (
             <div className="flex justify-between items-baseline">
               <span className="font-display text-base font-bold">Refund Due</span>
-              <span className="font-mono tabular-nums text-xl font-bold text-success">
+              <span className="font-mono tabular-nums text-xl font-bold text-green-600">
                 ₹{formatINR(c.refundDue)}
               </span>
             </div>

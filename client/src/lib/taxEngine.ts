@@ -3,7 +3,8 @@
  * 
  * Design: Swiss Financial — this module is the computational core.
  * Supports FY 2024-25 and FY 2025-26 with correct slab rates,
- * capital gains rates (pre/post Budget 2024), surcharge, cess.
+ * capital gains rates (pre/post Budget 2024), surcharge, cess,
+ * marginal relief on surcharge, and marginal relief on rebate 87A.
  * 
  * All amounts in INR (paise not used — whole numbers only).
  */
@@ -35,7 +36,7 @@ export interface SalaryIncome {
   perquisites: number;
   profitsInLieu: number;
   grossSalary: number;
-  standardDeduction: number; // 75000 for FY 2025-26, 75000 for FY 2024-25
+  standardDeduction: number;
   netSalary: number;
 }
 
@@ -53,22 +54,18 @@ export interface HouseProperty {
   annualRent: number;
   municipalTaxes: number;
   annualValue: number;
-  standardDeduction: number; // 30% of annual value
+  standardDeduction: number;
   interestOnLoan: number;
   taxableIncome: number;
 }
 
 export interface CapitalGainsIncome {
-  // Short Term Capital Gains
-  stcg111A_20: number;  // STCG u/s 111A @ 20% (listed equity, STT paid) — post July 2024
-  stcg111A_15: number;  // STCG u/s 111A @ 15% (listed equity, STT paid) — pre July 2024 (only for FY 2024-25)
-  stcgOther: number;    // STCG on other assets (taxed at slab rate)
-  
-  // Long Term Capital Gains
-  ltcg112A_125: number; // LTCG u/s 112A @ 12.5% (listed equity, STT paid) — post July 2024
-  ltcg112A_10: number;  // LTCG u/s 112A @ 10% (listed equity) — pre July 2024 (grandfathered, only FY 2024-25)
-  ltcgOther: number;    // LTCG on other assets @ 12.5%
-  
+  stcg111A_20: number;
+  stcg111A_15: number;
+  stcgOther: number;
+  ltcg112A_125: number;
+  ltcg112A_10: number;
+  ltcgOther: number;
   totalSTCG: number;
   totalLTCG: number;
   totalCapitalGains: number;
@@ -145,10 +142,16 @@ export interface TaxComputation {
   
   // Rebate u/s 87A
   rebate87A: number;
+  rebate87AMarginalRelief: number;  // NEW: marginal relief amount on rebate
   taxAfterRebate: number;
   
   // Surcharge
   surchargeRate: number;
+  surchargeRateCG: number;          // NEW: separate CG surcharge rate
+  surchargeOnNormal: number;        // NEW: surcharge on normal income
+  surchargeOnCG: number;            // NEW: surcharge on CG income
+  surchargeBeforeMarginalRelief: number; // NEW
+  surchargeMarginalRelief: number;  // NEW: marginal relief amount on surcharge
   surchargeAmount: number;
   taxAfterSurcharge: number;
   
@@ -211,6 +214,14 @@ const LTCG_112A_EXEMPTION: Record<FinancialYear, number> = {
   "2025-26": 125000,
 };
 
+// Surcharge thresholds for marginal relief computation
+// Each entry: [threshold, rate_below, rate_at_or_above]
+const SURCHARGE_THRESHOLDS: Array<[number, number, number]> = [
+  [5000000,  0,    0.10],  // 50L: 0% → 10%
+  [10000000, 0.10, 0.15],  // 1Cr: 10% → 15%
+  [20000000, 0.15, 0.25],  // 2Cr: 15% → 25%
+];
+
 // ─── Computation Functions ───────────────────────────────────────────
 
 function computeSlabTax(income: number, fy: FinancialYear): { slabs: SlabComputation[]; total: number } {
@@ -242,20 +253,85 @@ function computeSlabTax(income: number, fy: FinancialYear): { slabs: SlabComputa
 }
 
 function computeSurchargeRate(totalIncome: number): number {
-  // New Regime surcharge rates
-  // Max surcharge capped at 25% for new regime
-  // But for capital gains (111A, 112A), max surcharge is 15%
   if (totalIncome <= 5000000) return 0;
   if (totalIncome <= 10000000) return 0.10;
   if (totalIncome <= 20000000) return 0.15;
-  return 0.25; // Capped at 25% for new regime
+  return 0.25;
 }
 
 function computeSurchargeRateForCapitalGains(totalIncome: number): number {
-  // For STCG u/s 111A and LTCG u/s 112A, max surcharge is 15%
   if (totalIncome <= 5000000) return 0;
   if (totalIncome <= 10000000) return 0.10;
-  return 0.15; // Capped at 15% for capital gains
+  return 0.15;
+}
+
+/**
+ * Compute marginal relief on surcharge.
+ * 
+ * At each surcharge threshold, ensures that the total tax+surcharge does not
+ * exceed: (tax at threshold with lower surcharge rate) + (income - threshold).
+ * 
+ * This function computes the total tax+surcharge at the actual income and
+ * compares it with the ceiling. If the ceiling is lower, marginal relief
+ * is the difference.
+ * 
+ * For simplicity, we compute marginal relief on the aggregate (normal + CG)
+ * tax+surcharge, which is the standard approach used by the IT department.
+ */
+function computeSurchargeMarginalRelief(
+  totalIncome: number,
+  taxOnNormalAfterRebate: number,
+  taxOnCG: number,
+  surchargeOnNormal: number,
+  surchargeOnCG: number,
+  fy: FinancialYear
+): number {
+  const totalTaxWithSurcharge = taxOnNormalAfterRebate + taxOnCG + surchargeOnNormal + surchargeOnCG;
+  
+  // Check each threshold where surcharge rate jumps
+  for (const [threshold, lowerRate, higherRate] of SURCHARGE_THRESHOLDS) {
+    if (totalIncome > threshold && totalIncome <= threshold * 1.5) {
+      // Income is in the marginal zone above this threshold
+      // Compute what tax+surcharge would be at exactly the threshold
+      const taxAtThresholdNormal = computeSlabTax(
+        // We need to figure out what normalIncome would be at the threshold
+        // This is complex because normalIncome depends on totalIncome
+        // Simplified: use the same proportion
+        Math.max(0, threshold - (totalIncome - taxOnNormalAfterRebate - taxOnCG > 0 ? 0 : 0)),
+        fy
+      ).total;
+      
+      // Actually, the correct approach: compute the full tax at the threshold income
+      // The marginal relief formula is:
+      // tax_with_surcharge(actual_income) should not exceed 
+      // tax_with_surcharge(threshold_income) + (actual_income - threshold)
+      
+      // Tax at threshold: we need to recompute everything at threshold income
+      // But we don't have the full inputs here. Instead, use the standard formula:
+      // The surcharge rate at threshold is lowerRate
+      // Tax at threshold with lower surcharge = (taxOnNormalAfterRebate + taxOnCG) computed at threshold
+      
+      // Simplified standard approach used by IT dept:
+      // Total tax + surcharge at actual income
+      const actualTaxPlusSurcharge = totalTaxWithSurcharge;
+      
+      // Total tax + surcharge at threshold (using lower surcharge rate on same tax base)
+      // This is an approximation — the exact method would recompute tax at threshold income
+      // But for incomes just above threshold, the tax base is very similar
+      const surchargeAtLowerRate = Math.round(taxOnNormalAfterRebate * lowerRate) + 
+                                    Math.round(taxOnCG * Math.min(lowerRate, 0.15));
+      const taxPlusSurchargeAtThreshold = taxOnNormalAfterRebate + taxOnCG + surchargeAtLowerRate;
+      
+      const excessIncome = totalIncome - threshold;
+      const ceiling = taxPlusSurchargeAtThreshold + excessIncome;
+      
+      if (actualTaxPlusSurcharge > ceiling) {
+        return actualTaxPlusSurcharge - ceiling;
+      }
+    }
+  }
+  
+  return 0;
 }
 
 function roundToTen(amount: number): number {
@@ -276,8 +352,6 @@ export function computeTax(inputs: TaxInputs): TaxComputation {
   const grossTotalIncome = salaryIncome + housePropertyIncome + capitalGainsIncome + otherSourcesIncome;
   
   // ── Deductions (New Regime — very limited) ──
-  // Standard deduction is already applied in salary computation
-  // Family pension deduction (1/3 of pension or 15000, whichever is less)
   const familyPensionDeduction = Math.min(
     Math.round(inputs.otherSources.familyPension / 3),
     15000
@@ -288,7 +362,6 @@ export function computeTax(inputs: TaxInputs): TaxComputation {
   const totalIncomeRounded = roundToTen(totalIncome);
   
   // ── Separate Normal Income from Special Rate Income ──
-  // Normal income = Total income - all special rate capital gains
   const specialRateIncome = 
     inputs.capitalGains.stcg111A_20 +
     inputs.capitalGains.stcg111A_15 +
@@ -304,40 +377,109 @@ export function computeTax(inputs: TaxInputs): TaxComputation {
   const taxOnSTCG111A_20 = Math.round(inputs.capitalGains.stcg111A_20 * 0.20);
   const taxOnSTCG111A_15 = Math.round(inputs.capitalGains.stcg111A_15 * 0.15);
   
-  // LTCG u/s 112A — exemption of ₹1.25L (FY 2024-25 onwards)
   const ltcg112A_taxable_125 = Math.max(0, inputs.capitalGains.ltcg112A_125 - LTCG_112A_EXEMPTION[fy]);
   const taxOnLTCG112A_125 = Math.round(ltcg112A_taxable_125 * 0.125);
   
-  // LTCG @ 10% (grandfathered, pre-July 2024)
   const taxOnLTCG112A_10 = Math.round(inputs.capitalGains.ltcg112A_10 * 0.10);
   
   const totalTaxBeforeSurcharge = taxOnNormalIncome + taxOnSTCG111A_20 + taxOnSTCG111A_15 + taxOnLTCG112A_125 + taxOnLTCG112A_10;
   
-  // ── Rebate u/s 87A ──
-  // Available only if total income (excluding special rate income) <= limit
-  // Rebate does NOT apply to special rate income
+  // ── Rebate u/s 87A with Marginal Relief ──
   const rebateConfig = REBATE_87A[fy];
   let rebate87A = 0;
+  let rebate87AMarginalRelief = 0;
+  
   if (normalIncome <= rebateConfig.limit) {
+    // Full rebate: income within limit
     rebate87A = Math.min(taxOnNormalIncome, rebateConfig.maxRebate);
+  } else if (fy === "2025-26" && normalIncome > rebateConfig.limit && normalIncome <= 1275000) {
+    // Marginal relief zone for FY 2025-26: income between 12L and 12.75L
+    // Tax payable on normal income should not exceed (normalIncome - 12,00,000)
+    const excessOverLimit = normalIncome - rebateConfig.limit;
+    if (taxOnNormalIncome > excessOverLimit) {
+      // Apply marginal relief: rebate = tax - excess, so tax after rebate = excess
+      rebate87A = taxOnNormalIncome - excessOverLimit;
+      rebate87AMarginalRelief = rebate87A; // The entire rebate here IS the marginal relief
+    }
+    // If tax <= excess, no rebate needed (income is high enough that tax is reasonable)
+  } else if (fy === "2024-25" && normalIncome > rebateConfig.limit && normalIncome <= 750000) {
+    // Marginal relief zone for FY 2024-25: income between 7L and ~7.5L
+    const excessOverLimit = normalIncome - rebateConfig.limit;
+    if (taxOnNormalIncome > excessOverLimit) {
+      rebate87A = taxOnNormalIncome - excessOverLimit;
+      rebate87AMarginalRelief = rebate87A;
+    }
   }
+  // else: no rebate (income above marginal zone)
   
   const taxAfterRebate = totalTaxBeforeSurcharge - rebate87A;
   
   // ── Surcharge ──
-  // For simplicity, we apply a blended surcharge approach
-  // In practice, surcharge on CG income is capped at 15%
   const surchargeRate = computeSurchargeRate(totalIncome);
   const surchargeRateCG = computeSurchargeRateForCapitalGains(totalIncome);
   
-  // Surcharge on normal income tax
-  const surchargeOnNormal = Math.round((taxOnNormalIncome - rebate87A) * surchargeRate);
-  // Surcharge on CG tax (capped at 15%)
-  const surchargeOnCG = Math.round(
-    (taxOnSTCG111A_20 + taxOnSTCG111A_15 + taxOnLTCG112A_125 + taxOnLTCG112A_10) * surchargeRateCG
-  );
+  const taxOnNormalAfterRebate = Math.max(0, taxOnNormalIncome - rebate87A);
+  const taxOnCG = taxOnSTCG111A_20 + taxOnSTCG111A_15 + taxOnLTCG112A_125 + taxOnLTCG112A_10;
   
-  const surchargeAmount = Math.max(0, surchargeOnNormal + surchargeOnCG);
+  // Surcharge on normal income tax (after rebate)
+  const surchargeOnNormal = Math.round(taxOnNormalAfterRebate * surchargeRate);
+  // Surcharge on CG tax (capped at 15%)
+  const surchargeOnCG = Math.round(taxOnCG * surchargeRateCG);
+  
+  const surchargeBeforeMarginalRelief = Math.max(0, surchargeOnNormal + surchargeOnCG);
+  
+  // ── Surcharge Marginal Relief ──
+  // At each threshold (50L, 1Cr, 2Cr), ensure tax+surcharge doesn't exceed
+  // tax+surcharge at threshold + excess income over threshold
+  let surchargeMarginalRelief = 0;
+  
+  if (surchargeBeforeMarginalRelief > 0) {
+    // Find the highest threshold that was just crossed
+    // We iterate in reverse to find the most relevant threshold first
+    const reversedThresholds = [...SURCHARGE_THRESHOLDS].reverse();
+    
+    for (const [threshold, lowerRate, _higherRate] of reversedThresholds) {
+      if (totalIncome <= threshold) continue; // Haven't crossed this threshold
+      
+      // Check if the surcharge rate actually changes at this threshold
+      const rateAbove = computeSurchargeRate(threshold + 1);
+      const rateAtOrBelow = computeSurchargeRate(threshold);
+      if (rateAbove <= rateAtOrBelow) continue; // No rate change here
+      
+      // This is the relevant threshold — compute marginal relief
+      const actualTaxPlusSurcharge = taxOnNormalAfterRebate + taxOnCG + surchargeBeforeMarginalRelief;
+      
+      // Compute tax+surcharge at threshold income
+      // Normal income at threshold: reduce by the excess over threshold
+      const normalIncomeAtThreshold = Math.max(0, normalIncome - (totalIncome - threshold));
+      const { total: taxOnNormalAtThreshold } = computeSlabTax(normalIncomeAtThreshold, fy);
+      
+      // Rebate at threshold
+      let rebateAtThreshold = 0;
+      if (normalIncomeAtThreshold <= rebateConfig.limit) {
+        rebateAtThreshold = Math.min(taxOnNormalAtThreshold, rebateConfig.maxRebate);
+      }
+      const taxOnNormalAfterRebateAtThreshold = Math.max(0, taxOnNormalAtThreshold - rebateAtThreshold);
+      
+      // Surcharge at threshold uses the lower rate
+      const surchargeOnNormalAtThreshold = Math.round(taxOnNormalAfterRebateAtThreshold * lowerRate);
+      const cgSurchargeRateAtThreshold = Math.min(lowerRate, 0.15);
+      const surchargeOnCGAtThreshold = Math.round(taxOnCG * cgSurchargeRateAtThreshold);
+      
+      const taxPlusSurchargeAtThreshold = taxOnNormalAfterRebateAtThreshold + taxOnCG + surchargeOnNormalAtThreshold + surchargeOnCGAtThreshold;
+      
+      const excessIncome = totalIncome - threshold;
+      const ceiling = taxPlusSurchargeAtThreshold + excessIncome;
+      
+      if (actualTaxPlusSurcharge > ceiling) {
+        surchargeMarginalRelief = actualTaxPlusSurcharge - ceiling;
+      }
+      
+      break; // Only the highest relevant threshold matters
+    }
+  }
+  
+  const surchargeAmount = Math.max(0, surchargeBeforeMarginalRelief - surchargeMarginalRelief);
   const taxAfterSurcharge = taxAfterRebate + surchargeAmount;
   
   // ── Health & Education Cess ──
@@ -376,8 +518,14 @@ export function computeTax(inputs: TaxInputs): TaxComputation {
     taxOnLTCG112A_10,
     totalTaxBeforeSurcharge,
     rebate87A,
+    rebate87AMarginalRelief,
     taxAfterRebate,
-    surchargeRate: Math.max(surchargeRate, surchargeRateCG),
+    surchargeRate,
+    surchargeRateCG,
+    surchargeOnNormal,
+    surchargeOnCG,
+    surchargeBeforeMarginalRelief,
+    surchargeMarginalRelief,
     surchargeAmount,
     taxAfterSurcharge,
     cessRate,
@@ -406,11 +554,8 @@ export function computeHouseProperty(property: Partial<HouseProperty>): HousePro
   if (property.type === "self-occupied") {
     annualValue = 0;
     standardDeduction = 0;
-    // For self-occupied, only interest on loan is deductible (max 2L in old regime, no limit in new regime for let-out)
-    // In new regime, self-occupied: interest deduction up to 2L
     taxableIncome = -Math.min(interestOnLoan, 200000);
   } else {
-    // Let out or deemed let out
     annualValue = annualRent - municipalTaxes;
     standardDeduction = Math.round(annualValue * 0.30);
     taxableIncome = annualValue - standardDeduction - interestOnLoan;
@@ -521,7 +666,6 @@ export function formatINR(amount: number): string {
   const isNegative = amount < 0;
   const abs = Math.abs(Math.round(amount));
   
-  // Indian number formatting (lakhs/crores)
   const str = abs.toString();
   let result = "";
   

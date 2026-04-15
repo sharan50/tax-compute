@@ -18,3 +18,7 @@
 - [x] Frontend AI triage UI (classify button, review banner, AI tags)
 - [x] Write vitest tests for triage endpoint
 - [x] End-to-end testing and polish
+- [x] Implement marginal relief on surcharge (incomes near 50L/1Cr/2Cr boundaries)
+- [x] Implement marginal relief on rebate 87A (FY 2025-26: incomes 12L-12.75L)
+- [x] Update computation step UI to display marginal relief details when applied
+- [x] Write edge case tests for marginal relief scenarios
