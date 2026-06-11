@@ -38,9 +38,24 @@ class OAuthService {
     }
   }
 
-  private decodeState(state: string): string {
-    const redirectUri = atob(state);
-    return redirectUri;
+  private decodeState(state: string): { nonce: string; redirectUri: string } {
+    const decoded = atob(state);
+    // Format: "<nonce>.<redirectUri>". Split on the FIRST dot only, since the
+    // redirect URI itself may contain dots.
+    const dot = decoded.indexOf(".");
+    if (dot === -1) {
+      throw new Error("Malformed OAuth state");
+    }
+    return {
+      nonce: decoded.slice(0, dot),
+      redirectUri: decoded.slice(dot + 1),
+    };
+  }
+
+  // Exposed via SDKServer.parseState so the callback route can validate
+  // nonce + redirectUri before trusting them.
+  parseStateInternal(state: string): { nonce: string; redirectUri: string } {
+    return this.decodeState(state);
   }
 
   async getTokenByCode(
@@ -51,7 +66,7 @@ class OAuthService {
       clientId: ENV.appId,
       grantType: "authorization_code",
       code,
-      redirectUri: this.decodeState(state),
+      redirectUri: this.decodeState(state).redirectUri,
     };
 
     const { data } = await this.client.post<ExchangeTokenResponse>(
@@ -111,6 +126,15 @@ class SDKServer {
     if (set.has("REGISTERED_PLATFORM_GITHUB")) return "github";
     const first = Array.from(set)[0];
     return first ? first.toLowerCase() : null;
+  }
+
+  /**
+   * Parse and decode the OAuth `state` parameter into its nonce + redirect URI.
+   * Throws if the state is malformed. Used by the callback route to validate
+   * the login before trusting it.
+   */
+  parseState(state: string): { nonce: string; redirectUri: string } {
+    return this.oauthService.parseStateInternal(state);
   }
 
   /**
