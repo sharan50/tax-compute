@@ -8,17 +8,19 @@ import { z } from "zod";
 // ─── Transaction Triage Schema ───────────────────────────────────────
 
 const transactionSchema = z.object({
-  id: z.string(),
-  date: z.string(),
-  narration: z.string(),
-  withdrawal: z.number(),
-  deposit: z.number(),
+  id: z.string().max(64),
+  date: z.string().max(32),
+  narration: z.string().max(500),
+  withdrawal: z.number().finite(),
+  deposit: z.number().finite(),
 });
 
 const triageInputSchema = z.object({
-  transactions: z.array(transactionSchema),
-  accountHolder: z.string().optional(),
-  bankName: z.string().optional(),
+  // Cap the batch so a single request can't force an unbounded prompt or tie
+  // up the server. 500 covers a typical multi-year statement comfortably.
+  transactions: z.array(transactionSchema).max(500),
+  accountHolder: z.string().max(200).optional(),
+  bankName: z.string().max(200).optional(),
 });
 
 const TRIAGE_SYSTEM_PROMPT = `You are an Indian tax expert assistant. Your job is to classify bank transactions into tax-relevant categories.
