@@ -143,8 +143,20 @@ export default function HousePropertyStep() {
                   label="Interest on Home Loan"
                   value={property.interestOnLoan || 0}
                   onChange={(v) => updateProperty(index, { interestOnLoan: v })}
-                  hint={property.type === "self-occupied" ? "Max ₹2,00,000" : "No limit"}
+                  hint={
+                    property.type === "self-occupied"
+                      ? "Not deductible under the new regime"
+                      : "No limit"
+                  }
                 />
+
+                {property.type === "self-occupied" && (property.interestOnLoan || 0) > 0 && (
+                  <p className="text-xs text-muted-foreground italic -mt-2">
+                    Interest on a self-occupied property is disallowed by section
+                    115BAC(2)(i). The ₹2,00,000 deduction is an old-regime benefit and
+                    is not available here, so this property contributes nil.
+                  </p>
+                )}
 
                 {/* Computed Summary for this property */}
                 {computed && (

@@ -56,6 +56,8 @@ export interface HouseProperty {
   annualValue: number;
   standardDeduction: number;
   interestOnLoan: number;
+  /** Interest entered but not allowable under the new regime (self-occupied). */
+  interestDisallowed: number;
   taxableIncome: number;
 }
 
@@ -558,18 +560,29 @@ export function computeHouseProperty(property: Partial<HouseProperty>): HousePro
   
   let annualValue: number;
   let standardDeduction: number;
+  let interestDisallowed: number;
   let taxableIncome: number;
-  
+
   if (property.type === "self-occupied") {
+    // Annual value of a self-occupied property is nil u/s 23(2). Under the new
+    // regime s.115BAC(2)(i) disallows the s.24(b) interest deduction on a
+    // self-occupied property outright — the 2,00,000 cap is an old-regime rule
+    // and does not apply here. The property contributes nothing to the head.
     annualValue = 0;
     standardDeduction = 0;
-    taxableIncome = -Math.min(interestOnLoan, 200000);
+    interestDisallowed = interestOnLoan;
+    taxableIncome = 0;
   } else {
+    // Let-out and deemed let-out: municipal taxes come off the gross annual
+    // value to give the net annual value, then the 30% standard deduction and
+    // s.24(b) interest. Interest on a let-out property remains fully allowable
+    // under the new regime, with no monetary cap.
     annualValue = annualRent - municipalTaxes;
     standardDeduction = Math.round(annualValue * 0.30);
+    interestDisallowed = 0;
     taxableIncome = annualValue - standardDeduction - interestOnLoan;
   }
-  
+
   return {
     id: property.id || crypto.randomUUID(),
     type: property.type || "let-out",
@@ -581,6 +594,7 @@ export function computeHouseProperty(property: Partial<HouseProperty>): HousePro
     annualValue,
     standardDeduction,
     interestOnLoan,
+    interestDisallowed,
     taxableIncome,
   };
 }
