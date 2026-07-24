@@ -217,7 +217,7 @@ const NEW_REGIME_SLABS: Record<FinancialYear, TaxSlab[]> = {
   ],
 };
 
-const REBATE_87A: Record<FinancialYear, { limit: number; maxRebate: number }> = {
+export const REBATE_87A: Record<FinancialYear, { limit: number; maxRebate: number }> = {
   "2024-25": { limit: 700000, maxRebate: 25000 },
   "2025-26": { limit: 1200000, maxRebate: 60000 },
 };
@@ -245,7 +245,7 @@ const LTCG_112A_EXEMPTION: Record<FinancialYear, number> = {
 // the cap from 15,000 to 25,000 under the new regime with effect from
 // AY 2025-26, so both years this tool supports get 25,000. (15,000 is the
 // old-regime figure, and this tool is new-regime only.)
-const FAMILY_PENSION_DEDUCTION_CAP: Record<FinancialYear, number> = {
+export const FAMILY_PENSION_DEDUCTION_CAP: Record<FinancialYear, number> = {
   "2024-25": 25000,
   "2025-26": 25000,
 };

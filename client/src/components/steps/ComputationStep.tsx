@@ -9,7 +9,7 @@
 
 import { useTaxForm } from "@/contexts/TaxFormContext";
 import SectionHeader from "@/components/SectionHeader";
-import { formatINR } from "@/lib/taxEngine";
+import { formatINR, REBATE_87A } from "@/lib/taxEngine";
 import { Button } from "@/components/ui/button";
 import { FileDown, RotateCcw, Info } from "lucide-react";
 
@@ -116,6 +116,9 @@ export default function ComputationStep() {
     dispatch({ type: "RESET" });
   };
 
+  // The 87A threshold differs by year — 7,00,000 for FY 2024-25 and 12,00,000
+  // for FY 2025-26 — so read it from the engine's table rather than hard-coding.
+  const rebateThreshold = formatINR(REBATE_87A[fy].limit);
   const hasMarginalReliefOnRebate = c.rebate87AMarginalRelief > 0;
   const hasMarginalReliefOnSurcharge = c.surchargeMarginalRelief > 0;
   const hasSpecialRateTax =
@@ -159,7 +162,7 @@ export default function ComputationStep() {
               {hasMarginalReliefOnRebate && (
                 <p className="text-xs text-muted-foreground mt-1">
                   Rebate u/s 87A marginal relief of ₹{formatINR(c.rebate87AMarginalRelief)} applied — 
-                  tax capped so it does not exceed the income above ₹12,00,000.
+                  tax capped so it does not exceed the income above ₹{rebateThreshold}.
                 </p>
               )}
               {hasMarginalReliefOnSurcharge && (
@@ -279,6 +282,25 @@ export default function ComputationStep() {
           </>
         )}
 
+        {c.ltcg112AExemptionUsed > 0 && (
+          <Row
+            label="Less: Exemption u/s 112A"
+            amount={c.ltcg112AExemptionUsed}
+            negative
+            indent={1}
+            note="A single ₹1,25,000 allowance across all listed-security long-term gains, applied to the highest-taxed slice first."
+          />
+        )}
+        {c.basicExemptionUsedAgainstCG > 0 && (
+          <Row
+            label="Less: Unused basic exemption set off against capital gains"
+            amount={c.basicExemptionUsedAgainstCG}
+            negative
+            indent={1}
+            note="Where income other than these gains falls below the basic exemption, the shortfall reduces the gains before their rate applies (provisos to ss.111A, 112 and 112A). Residents only."
+          />
+        )}
+
         <Row label="Total Tax before Rebate" amount={c.totalTaxBeforeSurcharge} bold border />
 
         {/* Rebate */}
@@ -289,7 +311,7 @@ export default function ComputationStep() {
             negative
             indent={1}
             note={hasMarginalReliefOnRebate
-              ? `Includes marginal relief of ₹${formatINR(c.rebate87AMarginalRelief)} — tax capped at excess over ₹12,00,000`
+              ? `Includes marginal relief of ₹${formatINR(c.rebate87AMarginalRelief)} — tax capped at excess over ₹${rebateThreshold}`
               : undefined
             }
           />
@@ -336,14 +358,18 @@ export default function ComputationStep() {
                       indent={1}
                     />
                     <Row
-                      label={`Surcharge on Capital Gains @ ${Math.min(c.surchargeRate * 100, 15).toFixed(0)}%`}
+                      label={`Surcharge on Capital Gains @ ${(c.surchargeRateCG * 100).toFixed(0)}%`}
                       amount={c.surchargeOnCG}
                       indent={1}
                     />
                   </>
                 ) : (
                   <Row
-                    label={`Add: Surcharge @ ${(c.surchargeRate * 100).toFixed(0)}%`}
+                    label={
+                      c.surchargeOnNormal > 0
+                        ? `Add: Surcharge @ ${(c.surchargeRate * 100).toFixed(0)}%`
+                        : `Add: Surcharge on Capital Gains @ ${(c.surchargeRateCG * 100).toFixed(0)}%`
+                    }
                     amount={c.surchargeAmount}
                     indent={1}
                   />

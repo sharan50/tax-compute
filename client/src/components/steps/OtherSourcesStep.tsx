@@ -9,11 +9,12 @@ import { useMemo } from "react";
 import { useTaxForm } from "@/contexts/TaxFormContext";
 import SectionHeader from "@/components/SectionHeader";
 import CurrencyInput from "@/components/CurrencyInput";
-import { computeOtherSources, formatINR } from "@/lib/taxEngine";
+import { computeOtherSources, formatINR, FAMILY_PENSION_DEDUCTION_CAP } from "@/lib/taxEngine";
 
 export default function OtherSourcesStep() {
   const { state, dispatch } = useTaxForm();
-  const { otherSources } = state;
+  const { otherSources, assesseeInfo } = state;
+  const fy = assesseeInfo.financialYear;
 
   const computed = useMemo(() => computeOtherSources(otherSources), [otherSources]);
 
@@ -58,7 +59,7 @@ export default function OtherSourcesStep() {
         />
         <CurrencyInput
           label="Family Pension"
-          hint="Deduction of 1/3 or ₹15,000 (whichever is less) applied automatically"
+          hint={`Deduction of 1/3 or ₹${formatINR(FAMILY_PENSION_DEDUCTION_CAP[fy])} (whichever is less) applied automatically`}
           value={otherSources.familyPension || 0}
           onChange={(v) => update("familyPension", v)}
         />
