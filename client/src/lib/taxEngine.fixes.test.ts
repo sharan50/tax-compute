@@ -209,3 +209,75 @@ describe("BUG 3 — the 1,25,000 exemption u/s 112A across rate buckets", () => 
     expect(r.taxOnLTCG112A_125).toBe(21875); // (3,00,000 - 1,25,000) @ 12.5%
   });
 });
+
+describe("BUG 2 — s.87A rebate eligibility turns on total income", () => {
+  it("denies the rebate when capital gains push total income over the limit", () => {
+    const r = computeTax(
+      makeInputs({ salary: 1100000, capitalGains: { ltcg112A_125: 5000000 } })
+    );
+    expect(r.totalIncome).toBe(6025000);
+    expect(r.normalIncome).toBe(1025000);
+    expect(r.rebate87A).toBe(0); // previously granted 42,500
+  });
+
+  it("denies the rebate when a small STCG crosses the threshold", () => {
+    const r = computeTax(
+      makeInputs({ salary: 1275000, capitalGains: { stcg111A_20: 100000 } })
+    );
+    expect(r.totalIncome).toBe(1300000);
+    expect(r.rebate87A).toBe(0);
+  });
+
+  it("still gives the full rebate to a resident at exactly the limit", () => {
+    const r = computeTax(makeInputs({ salary: 1275000 }));
+    expect(r.totalIncome).toBe(1200000);
+    expect(r.rebate87A).toBe(60000);
+    expect(r.grossTaxLiability).toBe(0);
+  });
+
+  it("denies the rebate to a non-resident who would otherwise qualify", () => {
+    const resident = computeTax(makeInputs({ salary: 1275000 }));
+    const nri = computeTax(makeInputs({ salary: 1275000, residentialStatus: "nri" }));
+
+    expect(resident.rebate87A).toBe(60000);
+    expect(nri.rebate87A).toBe(0);
+    expect(nri.grossTaxLiability).toBe(62400); // 60,000 + 4% cess
+  });
+
+  it("keeps the rebate for resident senior citizens", () => {
+    const r = computeTax(
+      makeInputs({ salary: 1275000, residentialStatus: "resident-senior" })
+    );
+    expect(r.rebate87A).toBe(60000);
+  });
+
+  it("applies the total income gate for FY 2024-25 as well", () => {
+    const within = computeTax(makeInputs({ fy: "2024-25", salary: 775000 }));
+    expect(within.totalIncome).toBe(700000);
+    expect(within.rebate87A).toBe(20000);
+    expect(within.grossTaxLiability).toBe(0);
+
+    const over = computeTax(
+      makeInputs({
+        fy: "2024-25",
+        salary: 775000,
+        otherSources: { fdInterest: 100000 },
+      })
+    );
+    expect(over.totalIncome).toBe(800000);
+    expect(over.rebate87A).toBe(0);
+  });
+
+  it("measures marginal relief against total income, not normal income", () => {
+    // Normal income 12.05L, plus 10,000 of STCG => total income 12.15L.
+    // Excess over 12L is 15,000; slab tax on 12.05L is 60,750, so relief
+    // brings the slab tax down to the 15,000 excess.
+    const r = computeTax(
+      makeInputs({ salary: 1280000, capitalGains: { stcg111A_20: 10000 } })
+    );
+    expect(r.totalIncome).toBe(1215000);
+    expect(r.taxOnNormalIncome).toBe(60750);
+    expect(r.rebate87A).toBe(45750);
+    expect(r.rebate87AMarginalRelief).toBe(45750);
+  });
+});

@@ -212,6 +212,15 @@ const REBATE_87A: Record<FinancialYear, { limit: number; maxRebate: number }> = 
   "2025-26": { limit: 1200000, maxRebate: 60000 },
 };
 
+// Outer bound of the s.87A marginal relief zone. Relief tapers to nothing well
+// before these figures (~7,22,000 and ~12,70,600 respectively, where slab tax
+// first exceeds the excess over the threshold); these are simply the points
+// past which relief can never be due.
+const REBATE_87A_MARGINAL_RELIEF_CEILING: Record<FinancialYear, number> = {
+  "2024-25": 750000,
+  "2025-26": 1275000,
+};
+
 const STANDARD_DEDUCTION_SALARY: Record<FinancialYear, number> = {
   "2024-25": 75000,
   "2025-26": 75000,
@@ -429,32 +438,43 @@ export function computeTax(inputs: TaxInputs): TaxComputation {
   const totalTaxBeforeSurcharge = taxOnNormalIncome + taxOnSTCG111A_20 + taxOnSTCG111A_15 + taxOnLTCG112A_125 + taxOnLTCG112A_10;
   
   // ── Rebate u/s 87A with Marginal Relief ──
+  //
+  // Two separate questions, and the engine previously conflated them:
+  //
+  //   Eligibility is on TOTAL income. s.87A applies where "the total income of
+  //   an assessee, being an individual resident in India" does not exceed the
+  //   limit. Testing it against income net of special-rate capital gains handed
+  //   a rebate to people well over the threshold.
+  //
+  //   The rebate AMOUNT is computed only against tax on non-special-rate
+  //   income. s.112A(6) bars it against 112A gains outright, and the e-filing
+  //   utility has disallowed it against 111A gains since July 2024 — a position
+  //   the Finance Act 2025 wrote into the first proviso to s.87A from
+  //   AY 2026-27. Keeping the base as taxOnNormalIncome is the position the
+  //   department's own utility takes for both years this tool supports.
+  //
+  // Non-residents are outside s.87A entirely.
   const rebateConfig = REBATE_87A[fy];
+  const isResidentIndividual = inputs.assesseeInfo.residentialStatus !== "nri";
   let rebate87A = 0;
   let rebate87AMarginalRelief = 0;
-  
-  if (normalIncome <= rebateConfig.limit) {
-    // Full rebate: income within limit
-    rebate87A = Math.min(taxOnNormalIncome, rebateConfig.maxRebate);
-  } else if (fy === "2025-26" && normalIncome > rebateConfig.limit && normalIncome <= 1275000) {
-    // Marginal relief zone for FY 2025-26: income between 12L and 12.75L
-    // Tax payable on normal income should not exceed (normalIncome - 12,00,000)
-    const excessOverLimit = normalIncome - rebateConfig.limit;
-    if (taxOnNormalIncome > excessOverLimit) {
-      // Apply marginal relief: rebate = tax - excess, so tax after rebate = excess
-      rebate87A = taxOnNormalIncome - excessOverLimit;
-      rebate87AMarginalRelief = rebate87A; // The entire rebate here IS the marginal relief
-    }
-    // If tax <= excess, no rebate needed (income is high enough that tax is reasonable)
-  } else if (fy === "2024-25" && normalIncome > rebateConfig.limit && normalIncome <= 750000) {
-    // Marginal relief zone for FY 2024-25: income between 7L and ~7.5L
-    const excessOverLimit = normalIncome - rebateConfig.limit;
-    if (taxOnNormalIncome > excessOverLimit) {
-      rebate87A = taxOnNormalIncome - excessOverLimit;
-      rebate87AMarginalRelief = rebate87A;
+
+  if (isResidentIndividual) {
+    if (totalIncome <= rebateConfig.limit) {
+      rebate87A = Math.min(taxOnNormalIncome, rebateConfig.maxRebate);
+    } else if (totalIncome <= REBATE_87A_MARGINAL_RELIEF_CEILING[fy]) {
+      // Inside the marginal relief zone the tax must not exceed the amount by
+      // which total income overshoots the threshold. The ceiling below is a
+      // loose outer bound — the comparison itself decides whether relief is
+      // actually due, so no relief is granted once tax has grown past the
+      // excess.
+      const excessOverLimit = totalIncome - rebateConfig.limit;
+      if (taxOnNormalIncome > excessOverLimit) {
+        rebate87A = taxOnNormalIncome - excessOverLimit;
+        rebate87AMarginalRelief = rebate87A; // here the whole rebate IS the relief
+      }
     }
   }
-  // else: no rebate (income above marginal zone)
   
   const taxAfterRebate = totalTaxBeforeSurcharge - rebate87A;
   
