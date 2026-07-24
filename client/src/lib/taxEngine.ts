@@ -112,6 +112,10 @@ export interface SlabComputation {
 export interface TaxComputation {
   // Income Summary
   salaryIncome: number;
+  /** Head total before the 115BAC set-off bar — negative if the head is a loss. */
+  housePropertyIncomeGross: number;
+  /** Loss under the house property head that 115BAC does not allow to be set off. */
+  housePropertyLossDisallowed: number;
   housePropertyIncome: number;
   capitalGainsIncome: number;
   otherSourcesIncome: number;
@@ -356,7 +360,16 @@ export function computeTax(inputs: TaxInputs): TaxComputation {
   
   // ── Income Summary ──
   const salaryIncome = inputs.salary.netSalary;
-  const housePropertyIncome = inputs.houseProperty.totalIncome;
+
+  // s.115BAC(2)(i) bars a loss under the head "Income from house property" from
+  // being set off against income under any other head, and s.115BAC(2)(ii) bars
+  // carrying it forward — so an unabsorbed loss is simply lost. Set-off *within*
+  // the head is still allowed under s.70, so the floor applies to the aggregate
+  // of all properties, not to each property individually.
+  const housePropertyIncomeGross = inputs.houseProperty.totalIncome;
+  const housePropertyIncome = Math.max(0, housePropertyIncomeGross);
+  const housePropertyLossDisallowed = Math.max(0, -housePropertyIncomeGross);
+
   const capitalGainsIncome = inputs.capitalGains.totalCapitalGains;
   const otherSourcesIncome = inputs.otherSources.totalIncome;
   
@@ -511,6 +524,8 @@ export function computeTax(inputs: TaxInputs): TaxComputation {
   
   return {
     salaryIncome,
+    housePropertyIncomeGross,
+    housePropertyLossDisallowed,
     housePropertyIncome,
     capitalGainsIncome,
     otherSourcesIncome,

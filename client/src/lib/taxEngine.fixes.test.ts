@@ -95,3 +95,66 @@ describe("BUG 4 — self-occupied house property interest under the new regime",
     expect(p.taxableIncome).toBe(752440);
   });
 });
+
+describe("BUG 5 — house property loss set-off under the new regime", () => {
+  // s.115BAC(2)(i) bars inter-head set-off of a house property loss;
+  // s.115BAC(2)(ii) bars carrying it forward. Intra-head set-off survives.
+  const letOut = (annualRent: number, interestOnLoan: number) =>
+    computeHouseProperty({ type: "let-out", annualRent, interestOnLoan });
+
+  it("does not let a house property loss reduce salary income", () => {
+    const p = letOut(300000, 900000); // 3,00,000 - 90,000 - 9,00,000 = -6,90,000
+    expect(p.taxableIncome).toBe(-690000);
+
+    const r = computeTax(
+      makeInputs({
+        salary: 2000000,
+        houseProperty: { properties: [p], totalIncome: p.taxableIncome },
+      })
+    );
+    expect(r.housePropertyIncomeGross).toBe(-690000);
+    expect(r.housePropertyLossDisallowed).toBe(690000);
+    expect(r.housePropertyIncome).toBe(0);
+    expect(r.grossTotalIncome).toBe(1925000); // salary only
+  });
+
+  it("still allows set-off between properties within the head", () => {
+    const profitable = letOut(2000000, 0); // 20,00,000 - 6,00,000 = 14,00,000
+    const lossy = letOut(300000, 900000); // -6,90,000
+    const total = profitable.taxableIncome + lossy.taxableIncome;
+
+    const r = computeTax(
+      makeInputs({
+        salary: 1000000,
+        houseProperty: { properties: [profitable, lossy], totalIncome: total },
+      })
+    );
+    expect(r.housePropertyIncome).toBe(710000); // 14,00,000 - 6,90,000
+    expect(r.housePropertyLossDisallowed).toBe(0);
+    expect(r.grossTotalIncome).toBe(925000 + 710000);
+  });
+
+  it("disallows only the net loss when the head aggregates to negative", () => {
+    const small = letOut(400000, 0); // 4,00,000 - 1,20,000 = 2,80,000
+    const lossy = letOut(300000, 900000); // -6,90,000
+    const total = small.taxableIncome + lossy.taxableIncome; // -4,10,000
+
+    const r = computeTax(
+      makeInputs({
+        salary: 2000000,
+        houseProperty: { properties: [small, lossy], totalIncome: total },
+      })
+    );
+    expect(r.housePropertyIncomeGross).toBe(-410000);
+    expect(r.housePropertyLossDisallowed).toBe(410000);
+    expect(r.housePropertyIncome).toBe(0);
+    expect(r.grossTotalIncome).toBe(1925000);
+  });
+
+  it("leaves a positive house property head untouched", () => {
+    const r = computeTax(makeInputs({ salary: 1000000, houseProperty: 500000 }));
+    expect(r.housePropertyIncome).toBe(500000);
+    expect(r.housePropertyLossDisallowed).toBe(0);
+    expect(r.grossTotalIncome).toBe(1425000);
+  });
+});

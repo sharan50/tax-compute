@@ -187,8 +187,25 @@ export default function ComputationStep() {
         {c.salaryIncome > 0 && (
           <Row label="Income from Salary (after Std. Deduction)" amount={c.salaryIncome} />
         )}
-        {c.housePropertyIncome !== 0 && (
-          <Row label="Income from House Property" amount={c.housePropertyIncome} />
+        {c.housePropertyLossDisallowed > 0 ? (
+          <>
+            <Row
+              label="Loss from House Property"
+              amount={c.housePropertyIncomeGross}
+              muted
+            />
+            <Row
+              label="Add: Loss not eligible for set-off u/s 115BAC"
+              amount={c.housePropertyLossDisallowed}
+              indent={1}
+              note="Under the new regime a house property loss cannot be set off against any other head, and cannot be carried forward — it lapses this year."
+            />
+            <Row label="Income from House Property" amount={0} />
+          </>
+        ) : (
+          c.housePropertyIncome !== 0 && (
+            <Row label="Income from House Property" amount={c.housePropertyIncome} />
+          )
         )}
         {c.capitalGainsIncome > 0 && (
           <Row label="Capital Gains" amount={c.capitalGainsIncome} />
