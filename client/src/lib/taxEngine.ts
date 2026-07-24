@@ -138,6 +138,8 @@ export interface TaxComputation {
   taxOnNormalIncome: number;
   
   // Tax on Special Rate Income
+  /** Portion of the 1,25,000 s.112A exemption actually absorbed this year. */
+  ltcg112AExemptionUsed: number;
   taxOnSTCG111A_20: number;
   taxOnSTCG111A_15: number;
   taxOnLTCG112A_125: number;
@@ -401,10 +403,28 @@ export function computeTax(inputs: TaxInputs): TaxComputation {
   const taxOnSTCG111A_20 = Math.round(inputs.capitalGains.stcg111A_20 * 0.20);
   const taxOnSTCG111A_15 = Math.round(inputs.capitalGains.stcg111A_15 * 0.15);
   
-  const ltcg112A_taxable_125 = Math.max(0, inputs.capitalGains.ltcg112A_125 - LTCG_112A_EXEMPTION[fy]);
+  // The 1,25,000 exemption u/s 112A is a single annual allowance across all
+  // 112A long-term gains, not one allowance per rate bucket. Where FY 2024-25
+  // splits those gains either side of 23 July 2024, allocate the exemption
+  // against the higher-taxed (12.5%) bucket first: that is the most beneficial
+  // order for the assessee, and it reproduces the allocation in the CA
+  // computation this engine was validated against.
+  //
+  // It does not extend to LTCG u/s 112 (ltcgOther) — that is a different
+  // section with no such exemption.
+  const exemption112A = LTCG_112A_EXEMPTION[fy];
+  const exemptionAgainst125 = Math.min(inputs.capitalGains.ltcg112A_125, exemption112A);
+  const exemptionAgainst10 = Math.min(
+    inputs.capitalGains.ltcg112A_10,
+    exemption112A - exemptionAgainst125
+  );
+  const ltcg112AExemptionUsed = exemptionAgainst125 + exemptionAgainst10;
+
+  const ltcg112A_taxable_125 = inputs.capitalGains.ltcg112A_125 - exemptionAgainst125;
   const taxOnLTCG112A_125 = Math.round(ltcg112A_taxable_125 * 0.125);
-  
-  const taxOnLTCG112A_10 = Math.round(inputs.capitalGains.ltcg112A_10 * 0.10);
+
+  const ltcg112A_taxable_10 = inputs.capitalGains.ltcg112A_10 - exemptionAgainst10;
+  const taxOnLTCG112A_10 = Math.round(ltcg112A_taxable_10 * 0.10);
   
   const totalTaxBeforeSurcharge = taxOnNormalIncome + taxOnSTCG111A_20 + taxOnSTCG111A_15 + taxOnLTCG112A_125 + taxOnLTCG112A_10;
   
@@ -538,6 +558,7 @@ export function computeTax(inputs: TaxInputs): TaxComputation {
     normalIncome,
     slabComputation,
     taxOnNormalIncome,
+    ltcg112AExemptionUsed,
     taxOnSTCG111A_20,
     taxOnSTCG111A_15,
     taxOnLTCG112A_125,

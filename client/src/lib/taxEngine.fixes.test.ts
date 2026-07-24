@@ -158,3 +158,54 @@ describe("BUG 5 — house property loss set-off under the new regime", () => {
     expect(r.grossTotalIncome).toBe(1425000);
   });
 });
+
+describe("BUG 3 — the 1,25,000 exemption u/s 112A across rate buckets", () => {
+  // A single annual allowance across all 112A gains, applied to the
+  // higher-taxed bucket first.
+  it("applies the exemption to the 10% bucket when there is no 12.5% gain", () => {
+    const r = computeTax(
+      makeInputs({ fy: "2024-25", capitalGains: { ltcg112A_10: 500000 } })
+    );
+    // (5,00,000 - 1,25,000) @ 10%
+    expect(r.taxOnLTCG112A_10).toBe(37500);
+    expect(r.ltcg112AExemptionUsed).toBe(125000);
+  });
+
+  it("spills the unused remainder from the 12.5% bucket into the 10% bucket", () => {
+    const r = computeTax(
+      makeInputs({
+        fy: "2024-25",
+        capitalGains: { ltcg112A_125: 50000, ltcg112A_10: 500000 },
+      })
+    );
+    // 50,000 absorbed at 12.5% (nil taxable), remaining 75,000 against the 10%
+    // bucket: (5,00,000 - 75,000) @ 10% = 42,500
+    expect(r.taxOnLTCG112A_125).toBe(0);
+    expect(r.taxOnLTCG112A_10).toBe(42500);
+    expect(r.ltcg112AExemptionUsed).toBe(125000);
+  });
+
+  it("never grants more than one 1,25,000 allowance in total", () => {
+    const r = computeTax(
+      makeInputs({
+        fy: "2024-25",
+        capitalGains: { ltcg112A_125: 1000000, ltcg112A_10: 1000000 },
+      })
+    );
+    expect(r.ltcg112AExemptionUsed).toBe(125000);
+    // Whole exemption goes to the 12.5% bucket; the 10% bucket is taxed in full
+    expect(r.taxOnLTCG112A_125).toBe(109375); // (10,00,000 - 1,25,000) @ 12.5%
+    expect(r.taxOnLTCG112A_10).toBe(100000); // 10,00,000 @ 10%
+  });
+
+  it("absorbs only what the gain can bear", () => {
+    const r = computeTax(makeInputs({ capitalGains: { ltcg112A_125: 40000 } }));
+    expect(r.ltcg112AExemptionUsed).toBe(40000);
+    expect(r.taxOnLTCG112A_125).toBe(0);
+  });
+
+  it("applies the exemption in FY 2025-26 too", () => {
+    const r = computeTax(makeInputs({ capitalGains: { ltcg112A_125: 300000 } }));
+    expect(r.taxOnLTCG112A_125).toBe(21875); // (3,00,000 - 1,25,000) @ 12.5%
+  });
+});
