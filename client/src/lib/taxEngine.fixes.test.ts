@@ -359,3 +359,62 @@ describe("BUG 1 — LTCG u/s 112 must not be taxed at slab rates", () => {
     expect(r.totalTaxBeforeSurcharge).toBe(12500 + 40000);
   });
 });
+
+describe("edge cases ported from the .mjs harnesses", () => {
+  it("steps the surcharge rate at each threshold", () => {
+    const rateAt = (totalIncome: number) =>
+      computeTax(makeInputs({ salary: totalIncome + 75000 })).surchargeRate;
+
+    expect(rateAt(5000000)).toBe(0);
+    expect(rateAt(5000001)).toBe(0.1);
+    expect(rateAt(10000000)).toBe(0.1);
+    expect(rateAt(10000001)).toBe(0.15);
+    expect(rateAt(20000000)).toBe(0.15);
+    expect(rateAt(20000001)).toBe(0.25);
+  });
+
+  it("caps the capital gains surcharge rate at 15%", () => {
+    const cgRateAt = (totalIncome: number) =>
+      computeTax(makeInputs({ salary: totalIncome + 75000 })).surchargeRateCG;
+
+    expect(cgRateAt(5000001)).toBe(0.1);
+    expect(cgRateAt(10000001)).toBe(0.15);
+    expect(cgRateAt(30000000)).toBe(0.15);
+  });
+
+  it("computes a full FY 2025-26 salary case", () => {
+    const r = computeTax(makeInputs({ salary: 2500000 }));
+    expect(r.normalIncome).toBe(2425000);
+    // 4-8L 20,000 | 8-12L 40,000 | 12-16L 60,000 | 16-20L 80,000
+    // 20-24L 1,00,000 | 24-24.25L 7,500
+    expect(r.taxOnNormalIncome).toBe(307500);
+    expect(r.surchargeAmount).toBe(0);
+    expect(r.cessAmount).toBe(12300);
+    expect(r.grossTaxLiability).toBe(319800);
+  });
+
+  it("keeps the 112A exemption boundary exact", () => {
+    expect(
+      computeTax(makeInputs({ capitalGains: { ltcg112A_125: 125000 } }))
+        .taxOnLTCG112A_125
+    ).toBe(0);
+    expect(
+      computeTax(makeInputs({ capitalGains: { ltcg112A_125: 125100 } }))
+        .taxOnLTCG112A_125
+    ).toBe(13); // 100 @ 12.5%
+  });
+
+  it("nets TDS, advance tax and self-assessment tax against the liability", () => {
+    const r = computeTax(
+      makeInputs({
+        salary: 2500000,
+        tds: [{ section: "192", description: "Salary", amount: 200000 }],
+        advanceTax: 50000,
+        selfAssessmentTax: 25000,
+      })
+    );
+    expect(r.totalTaxesPaid).toBe(275000);
+    expect(r.netTaxPayable).toBe(319800 - 275000);
+    expect(r.refundDue).toBe(0);
+  });
+});
