@@ -17,50 +17,8 @@ import {
   computeCapitalGains,
   computeOtherSources,
 } from "./taxEngine";
-import type {
-  TaxInputs,
-  FinancialYear,
-  CapitalGainsIncome,
-  OtherSourcesIncome,
-  TDSEntry,
-} from "./taxEngine";
-
-interface Overrides {
-  fy?: FinancialYear;
-  salary?: number;
-  houseProperty?: number;
-  capitalGains?: Partial<CapitalGainsIncome>;
-  otherSources?: Partial<OtherSourcesIncome>;
-  tds?: TDSEntry[];
-  advanceTax?: number;
-  selfAssessmentTax?: number;
-  residentialStatus?: TaxInputs["assesseeInfo"]["residentialStatus"];
-}
-
-export function makeInputs(o: Overrides = {}): TaxInputs {
-  const fy: FinancialYear = o.fy || "2025-26";
-  return {
-    assesseeInfo: {
-      name: "Test",
-      pan: "AAAAA0000A",
-      fatherName: "Father",
-      dob: "1970-01-01",
-      gender: "male",
-      residentialStatus: o.residentialStatus || "resident",
-      address: "Test",
-      email: "test@test.com",
-      phone: "9999999999",
-      financialYear: fy,
-    },
-    salary: computeSalary({ basicSalary: o.salary || 0 }, fy),
-    houseProperty: { properties: [], totalIncome: o.houseProperty || 0 },
-    capitalGains: computeCapitalGains(o.capitalGains || {}),
-    otherSources: computeOtherSources(o.otherSources || {}),
-    tdsEntries: o.tds || [],
-    advanceTax: o.advanceTax || 0,
-    selfAssessmentTax: o.selfAssessmentTax || 0,
-  };
-}
+import type { TaxInputs } from "./taxEngine";
+import { makeInputs } from "./taxEngine.fixtures";
 
 describe("CA computation sheet — FY 2024-25 (validated to the rupee)", () => {
   // House property is passed as a pre-aggregated positive total, exactly as the

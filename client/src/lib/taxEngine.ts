@@ -214,6 +214,15 @@ const LTCG_112A_EXEMPTION: Record<FinancialYear, number> = {
   "2025-26": 125000,
 };
 
+// Deduction u/s 57(iia) on family pension. The Finance (No.2) Act 2024 raised
+// the cap from 15,000 to 25,000 under the new regime with effect from
+// AY 2025-26, so both years this tool supports get 25,000. (15,000 is the
+// old-regime figure, and this tool is new-regime only.)
+const FAMILY_PENSION_DEDUCTION_CAP: Record<FinancialYear, number> = {
+  "2024-25": 25000,
+  "2025-26": 25000,
+};
+
 // Surcharge thresholds for marginal relief computation
 // Each entry: [threshold, rate_below, rate_at_or_above]
 const SURCHARGE_THRESHOLDS: Array<[number, number, number]> = [
@@ -354,7 +363,7 @@ export function computeTax(inputs: TaxInputs): TaxComputation {
   // ── Deductions (New Regime — very limited) ──
   const familyPensionDeduction = Math.min(
     Math.round(inputs.otherSources.familyPension / 3),
-    15000
+    FAMILY_PENSION_DEDUCTION_CAP[fy]
   );
   const totalDeductions = familyPensionDeduction;
   
