@@ -86,11 +86,23 @@ export default function CapitalGainsStep() {
               />
             )}
             <CurrencyInput
-              label="LTCG on Other Assets @ 12.5%"
-              hint="Property, unlisted shares, etc."
-              value={capitalGains.ltcgOther || 0}
-              onChange={(v) => update("ltcgOther", v)}
+              label="LTCG on Other Assets @ 12.5% (u/s 112)"
+              hint={
+                fy === "2024-25"
+                  ? "Property, unlisted shares, debt, gold — transferred on/after 23 July 2024"
+                  : "Property, unlisted shares, debt, gold — no indexation"
+              }
+              value={capitalGains.ltcgOther_125 || 0}
+              onChange={(v) => update("ltcgOther_125", v)}
             />
+            {fy === "2024-25" && (
+              <CurrencyInput
+                label="LTCG on Other Assets @ 20% with indexation (u/s 112)"
+                hint="Pre-23 July 2024 — enter the indexed gain"
+                value={capitalGains.ltcgOther_20 || 0}
+                onChange={(v) => update("ltcgOther_20", v)}
+              />
+            )}
             <div className="flex justify-between items-baseline pt-3 border-t border-border/50">
               <span className="text-sm font-medium">Total LTCG</span>
               <span className="font-mono tabular-nums font-medium">{formatINR(computed.totalLTCG)}</span>

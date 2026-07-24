@@ -281,3 +281,81 @@ describe("BUG 2 — s.87A rebate eligibility turns on total income", () => {
     expect(r.rebate87AMarginalRelief).toBe(45750);
   });
 });
+
+describe("BUG 1 — LTCG u/s 112 must not be taxed at slab rates", () => {
+  it("charges s.112 LTCG at 12.5%, not at the slab rate", () => {
+    const r = computeTax(
+      makeInputs({ salary: 2000000, capitalGains: { ltcgOther_125: 5000000 } })
+    );
+
+    // Slab base is salary only: 20,00,000 - 75,000 = 19,25,000
+    expect(r.normalIncome).toBe(1925000);
+    // 0-4L nil, 4-8L 20,000, 8-12L 40,000, 12-16L 60,000, 16-19.25L 65,000
+    expect(r.taxOnNormalIncome).toBe(185000);
+    expect(r.taxOnLTCGOther_125).toBe(625000); // 50,00,000 @ 12.5%
+
+    // Surcharge: total income 69,25,000 is over 50L, so 10% on both bases
+    expect(r.surchargeOnNormal).toBe(18500);
+    expect(r.surchargeOnCG).toBe(62500);
+    expect(r.cessAmount).toBe(35640);
+    expect(r.grossTaxLiability).toBe(926640); // was 18,96,180 at slab rates
+  });
+
+  it("charges the pre-23-July-2024 bucket at 20% with indexation", () => {
+    const r = computeTax(
+      makeInputs({ fy: "2024-25", capitalGains: { ltcgOther_20: 1000000 } })
+    );
+    expect(r.taxOnLTCGOther_20).toBe(200000);
+    expect(r.normalIncome).toBe(0);
+    expect(r.taxOnNormalIncome).toBe(0);
+  });
+
+  it("gives s.112 LTCG no 1,25,000 exemption — that belongs to s.112A", () => {
+    const r = computeTax(makeInputs({ capitalGains: { ltcgOther_125: 1000000 } }));
+    expect(r.taxOnLTCGOther_125).toBe(125000); // full amount @ 12.5%
+    expect(r.ltcg112AExemptionUsed).toBe(0);
+  });
+
+  it("caps surcharge on s.112 LTCG at 15% above 2 crore", () => {
+    const r = computeTax(
+      makeInputs({ salary: 5000000, capitalGains: { ltcgOther_125: 20000000 } })
+    );
+    expect(r.totalIncome).toBe(24925000); // over 2 crore
+    expect(r.surchargeRate).toBe(0.25);
+    expect(r.surchargeRateCG).toBe(0.15);
+    // 2,00,00,000 @ 12.5% = 25,00,000, surcharge capped at 15% not 25%
+    expect(r.taxOnLTCGOther_125).toBe(2500000);
+    expect(r.surchargeOnCG).toBe(375000);
+  });
+
+  it("excludes s.112 LTCG from the 87A rebate base", () => {
+    // Normal income 4,25,000 (nil tax), plus 20,00,000 of s.112 LTCG.
+    // Total income is over 12L so no rebate is due at all.
+    const r = computeTax(
+      makeInputs({ salary: 500000, capitalGains: { ltcgOther_125: 2000000 } })
+    );
+    expect(r.totalIncome).toBe(2425000);
+    expect(r.rebate87A).toBe(0);
+    expect(r.taxOnLTCGOther_125).toBe(250000);
+  });
+
+  it("still taxes STCG on non-STT assets at slab rates", () => {
+    const r = computeTax(
+      makeInputs({ salary: 1000000, capitalGains: { stcgOther: 500000 } })
+    );
+    // stcgOther stays in the slab base: 9,25,000 + 5,00,000 = 14,25,000
+    expect(r.normalIncome).toBe(1425000);
+    expect(r.taxOnNormalIncome).toBe(93750);
+  });
+
+  it("counts both s.112 buckets in total capital gains", () => {
+    const r = computeTax(
+      makeInputs({
+        fy: "2024-25",
+        capitalGains: { ltcgOther_125: 100000, ltcgOther_20: 200000 },
+      })
+    );
+    expect(r.capitalGainsIncome).toBe(300000);
+    expect(r.totalTaxBeforeSurcharge).toBe(12500 + 40000);
+  });
+});

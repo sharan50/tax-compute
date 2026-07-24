@@ -118,7 +118,13 @@ export default function ComputationStep() {
 
   const hasMarginalReliefOnRebate = c.rebate87AMarginalRelief > 0;
   const hasMarginalReliefOnSurcharge = c.surchargeMarginalRelief > 0;
-  const hasSpecialRateTax = c.taxOnSTCG111A_20 > 0 || c.taxOnSTCG111A_15 > 0 || c.taxOnLTCG112A_125 > 0 || c.taxOnLTCG112A_10 > 0;
+  const hasSpecialRateTax =
+    c.taxOnSTCG111A_20 > 0 ||
+    c.taxOnSTCG111A_15 > 0 ||
+    c.taxOnLTCG112A_125 > 0 ||
+    c.taxOnLTCG112A_10 > 0 ||
+    c.taxOnLTCGOther_125 > 0 ||
+    c.taxOnLTCGOther_20 > 0;
 
   return (
     <div>
@@ -259,6 +265,16 @@ export default function ComputationStep() {
             )}
             {c.taxOnLTCG112A_10 > 0 && (
               <Row label="LTCG u/s 112A @ 10%" amount={c.taxOnLTCG112A_10} indent={1} />
+            )}
+            {c.taxOnLTCGOther_125 > 0 && (
+              <Row label="LTCG u/s 112 @ 12.5%" amount={c.taxOnLTCGOther_125} indent={1} />
+            )}
+            {c.taxOnLTCGOther_20 > 0 && (
+              <Row
+                label="LTCG u/s 112 @ 20% (with indexation)"
+                amount={c.taxOnLTCGOther_20}
+                indent={1}
+              />
             )}
           </>
         )}

@@ -64,10 +64,14 @@ export interface HouseProperty {
 export interface CapitalGainsIncome {
   stcg111A_20: number;
   stcg111A_15: number;
+  /** STCG on non-STT assets — correctly taxed at slab rates. */
   stcgOther: number;
   ltcg112A_125: number;
   ltcg112A_10: number;
-  ltcgOther: number;
+  /** LTCG u/s 112 (property, unlisted shares, debt, gold) @ 12.5% without indexation. */
+  ltcgOther_125: number;
+  /** LTCG u/s 112 on transfers before 23 July 2024 @ 20% with indexation. FY 2024-25 only. */
+  ltcgOther_20: number;
   totalSTCG: number;
   totalLTCG: number;
   totalCapitalGains: number;
@@ -144,6 +148,10 @@ export interface TaxComputation {
   taxOnSTCG111A_15: number;
   taxOnLTCG112A_125: number;
   taxOnLTCG112A_10: number;
+  /** Tax on LTCG u/s 112 @ 12.5% (no indexation). */
+  taxOnLTCGOther_125: number;
+  /** Tax on LTCG u/s 112 @ 20% with indexation (pre-23 July 2024). */
+  taxOnLTCGOther_20: number;
   
   // Totals
   totalTaxBeforeSurcharge: number;
@@ -397,11 +405,15 @@ export function computeTax(inputs: TaxInputs): TaxComputation {
   const totalIncomeRounded = roundToTen(totalIncome);
   
   // ── Separate Normal Income from Special Rate Income ──
-  const specialRateIncome = 
+  // Everything charged at its own rate rather than at slab rates. stcgOther is
+  // deliberately absent: STCG on non-STT assets really is taxed at slab rates.
+  const specialRateIncome =
     inputs.capitalGains.stcg111A_20 +
     inputs.capitalGains.stcg111A_15 +
     inputs.capitalGains.ltcg112A_125 +
-    inputs.capitalGains.ltcg112A_10;
+    inputs.capitalGains.ltcg112A_10 +
+    inputs.capitalGains.ltcgOther_125 +
+    inputs.capitalGains.ltcgOther_20;
   
   const normalIncome = Math.max(0, totalIncome - specialRateIncome);
   
@@ -434,8 +446,23 @@ export function computeTax(inputs: TaxInputs): TaxComputation {
 
   const ltcg112A_taxable_10 = inputs.capitalGains.ltcg112A_10 - exemptionAgainst10;
   const taxOnLTCG112A_10 = Math.round(ltcg112A_taxable_10 * 0.10);
-  
-  const totalTaxBeforeSurcharge = taxOnNormalIncome + taxOnSTCG111A_20 + taxOnSTCG111A_15 + taxOnLTCG112A_125 + taxOnLTCG112A_10;
+
+  // LTCG u/s 112 — property, unlisted shares, debt, gold. Charged at its own
+  // rate, not at slab rates, and it gets no 1,25,000 exemption (that lives in
+  // s.112A). The Finance (No.2) Act 2024 moved the rate to 12.5% without
+  // indexation for transfers on or after 23 July 2024; earlier transfers in
+  // FY 2024-25 stay at 20% with indexation.
+  const taxOnLTCGOther_125 = Math.round(inputs.capitalGains.ltcgOther_125 * 0.125);
+  const taxOnLTCGOther_20 = Math.round(inputs.capitalGains.ltcgOther_20 * 0.20);
+
+  const totalTaxBeforeSurcharge =
+    taxOnNormalIncome +
+    taxOnSTCG111A_20 +
+    taxOnSTCG111A_15 +
+    taxOnLTCG112A_125 +
+    taxOnLTCG112A_10 +
+    taxOnLTCGOther_125 +
+    taxOnLTCGOther_20;
   
   // ── Rebate u/s 87A with Marginal Relief ──
   //
@@ -483,7 +510,17 @@ export function computeTax(inputs: TaxInputs): TaxComputation {
   const surchargeRateCG = computeSurchargeRateForCapitalGains(totalIncome);
   
   const taxOnNormalAfterRebate = Math.max(0, taxOnNormalIncome - rebate87A);
-  const taxOnCG = taxOnSTCG111A_20 + taxOnSTCG111A_15 + taxOnLTCG112A_125 + taxOnLTCG112A_10;
+  // Surcharge on capital gains is capped at 15%. That cap covers s.111A and
+  // s.112A, and the Finance Act 2022 extended it to long-term gains under
+  // s.112 as well — so the s.112 buckets belong in this base, not the normal
+  // one. Above 2 crore the difference is 25% vs 15%.
+  const taxOnCG =
+    taxOnSTCG111A_20 +
+    taxOnSTCG111A_15 +
+    taxOnLTCG112A_125 +
+    taxOnLTCG112A_10 +
+    taxOnLTCGOther_125 +
+    taxOnLTCGOther_20;
   
   // Surcharge on normal income tax (after rebate)
   const surchargeOnNormal = Math.round(taxOnNormalAfterRebate * surchargeRate);
@@ -583,6 +620,8 @@ export function computeTax(inputs: TaxInputs): TaxComputation {
     taxOnSTCG111A_15,
     taxOnLTCG112A_125,
     taxOnLTCG112A_10,
+    taxOnLTCGOther_125,
+    taxOnLTCGOther_20,
     totalTaxBeforeSurcharge,
     rebate87A,
     rebate87AMarginalRelief,
@@ -719,10 +758,11 @@ export function computeCapitalGains(inputs: Partial<CapitalGainsIncome>): Capita
   const stcgOther = inputs.stcgOther || 0;
   const ltcg112A_125 = inputs.ltcg112A_125 || 0;
   const ltcg112A_10 = inputs.ltcg112A_10 || 0;
-  const ltcgOther = inputs.ltcgOther || 0;
+  const ltcgOther_125 = inputs.ltcgOther_125 || 0;
+  const ltcgOther_20 = inputs.ltcgOther_20 || 0;
   
   const totalSTCG = stcg111A_20 + stcg111A_15 + stcgOther;
-  const totalLTCG = ltcg112A_125 + ltcg112A_10 + ltcgOther;
+  const totalLTCG = ltcg112A_125 + ltcg112A_10 + ltcgOther_125 + ltcgOther_20;
   const totalCapitalGains = totalSTCG + totalLTCG;
   
   return {
@@ -731,7 +771,8 @@ export function computeCapitalGains(inputs: Partial<CapitalGainsIncome>): Capita
     stcgOther,
     ltcg112A_125,
     ltcg112A_10,
-    ltcgOther,
+    ltcgOther_125,
+    ltcgOther_20,
     totalSTCG,
     totalLTCG,
     totalCapitalGains,
