@@ -6,18 +6,9 @@
  */
 
 import React, { createContext, useContext, useReducer, useCallback, useMemo } from "react";
-import type {
-  AssesseeInfo,
-  SalaryIncome,
-  HousePropertyIncome,
-  HouseProperty,
-  CapitalGainsIncome,
-  OtherSourcesIncome,
-  TDSEntry,
-  TaxInputs,
-  TaxComputation,
-  FinancialYear,
-} from "@/lib/taxEngine";
+import type { HousePropertyIncome, TaxInputs } from "@/lib/taxEngine";
+import type { TaxFormState, Action } from "./taxFormReducer";
+import { reducer, initialState } from "./taxFormReducer";
 import {
   computeTax,
   computeSalary,
@@ -43,122 +34,8 @@ export type StepId = (typeof STEPS)[number]["id"];
 
 // ─── State ───────────────────────────────────────────────────────────
 
-interface TaxFormState {
-  currentStep: number;
-  assesseeInfo: AssesseeInfo;
-  salary: Partial<SalaryIncome>;
-  houseProperties: Partial<HouseProperty>[];
-  capitalGains: Partial<CapitalGainsIncome>;
-  otherSources: Partial<OtherSourcesIncome>;
-  tdsEntries: TDSEntry[];
-  advanceTax: number;
-  selfAssessmentTax: number;
-  computation: TaxComputation | null;
-}
-
-const defaultAssesseeInfo: AssesseeInfo = {
-  name: "",
-  pan: "",
-  fatherName: "",
-  dob: "",
-  gender: "male",
-  residentialStatus: "resident",
-  address: "",
-  email: "",
-  phone: "",
-  financialYear: "2025-26",
-};
-
-const initialState: TaxFormState = {
-  currentStep: 0,
-  assesseeInfo: defaultAssesseeInfo,
-  salary: {},
-  houseProperties: [],
-  capitalGains: {},
-  otherSources: {},
-  tdsEntries: [],
-  advanceTax: 0,
-  selfAssessmentTax: 0,
-  computation: null,
-};
-
-// ─── Actions ─────────────────────────────────────────────────────────
-
-type Action =
-  | { type: "SET_STEP"; step: number }
-  | { type: "UPDATE_ASSESSEE"; data: Partial<AssesseeInfo> }
-  | { type: "UPDATE_SALARY"; data: Partial<SalaryIncome> }
-  | { type: "ADD_PROPERTY" }
-  | { type: "UPDATE_PROPERTY"; index: number; data: Partial<HouseProperty> }
-  | { type: "REMOVE_PROPERTY"; index: number }
-  | { type: "UPDATE_CAPITAL_GAINS"; data: Partial<CapitalGainsIncome> }
-  | { type: "UPDATE_OTHER_SOURCES"; data: Partial<OtherSourcesIncome> }
-  | { type: "ADD_TDS_ENTRY"; entry: TDSEntry }
-  | { type: "UPDATE_TDS_ENTRY"; index: number; entry: Partial<TDSEntry> }
-  | { type: "REMOVE_TDS_ENTRY"; index: number }
-  | { type: "SET_ADVANCE_TAX"; amount: number }
-  | { type: "SET_SELF_ASSESSMENT_TAX"; amount: number }
-  | { type: "SET_COMPUTATION"; computation: TaxComputation }
-  | { type: "RESET" };
-
-function reducer(state: TaxFormState, action: Action): TaxFormState {
-  switch (action.type) {
-    case "SET_STEP":
-      return { ...state, currentStep: action.step };
-    case "UPDATE_ASSESSEE":
-      return { ...state, assesseeInfo: { ...state.assesseeInfo, ...action.data } };
-    case "UPDATE_SALARY":
-      return { ...state, salary: { ...state.salary, ...action.data } };
-    case "ADD_PROPERTY":
-      return {
-        ...state,
-        houseProperties: [
-          ...state.houseProperties,
-          { id: crypto.randomUUID(), type: "let-out" },
-        ],
-      };
-    case "UPDATE_PROPERTY":
-      return {
-        ...state,
-        houseProperties: state.houseProperties.map((p, i) =>
-          i === action.index ? { ...p, ...action.data } : p
-        ),
-      };
-    case "REMOVE_PROPERTY":
-      return {
-        ...state,
-        houseProperties: state.houseProperties.filter((_, i) => i !== action.index),
-      };
-    case "UPDATE_CAPITAL_GAINS":
-      return { ...state, capitalGains: { ...state.capitalGains, ...action.data } };
-    case "UPDATE_OTHER_SOURCES":
-      return { ...state, otherSources: { ...state.otherSources, ...action.data } };
-    case "ADD_TDS_ENTRY":
-      return { ...state, tdsEntries: [...state.tdsEntries, action.entry] };
-    case "UPDATE_TDS_ENTRY":
-      return {
-        ...state,
-        tdsEntries: state.tdsEntries.map((e, i) =>
-          i === action.index ? { ...e, ...action.entry } : e
-        ),
-      };
-    case "REMOVE_TDS_ENTRY":
-      return {
-        ...state,
-        tdsEntries: state.tdsEntries.filter((_, i) => i !== action.index),
-      };
-    case "SET_ADVANCE_TAX":
-      return { ...state, advanceTax: action.amount };
-    case "SET_SELF_ASSESSMENT_TAX":
-      return { ...state, selfAssessmentTax: action.amount };
-    case "SET_COMPUTATION":
-      return { ...state, computation: action.computation };
-    case "RESET":
-      return initialState;
-    default:
-      return state;
-  }
-}
+export type { TaxFormState, Action } from "./taxFormReducer";
+export { reducer, initialState } from "./taxFormReducer";
 
 // ─── Context ─────────────────────────────────────────────────────────
 
