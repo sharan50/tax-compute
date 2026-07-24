@@ -162,9 +162,11 @@ describe("BUG 5 — house property loss set-off under the new regime", () => {
 describe("BUG 3 — the 1,25,000 exemption u/s 112A across rate buckets", () => {
   // A single annual allowance across all 112A gains, applied to the
   // higher-taxed bucket first.
+  // Each case carries enough salary to exhaust the basic exemption, so these
+  // assert the 112A allowance alone. The shortfall proviso is tested separately.
   it("applies the exemption to the 10% bucket when there is no 12.5% gain", () => {
     const r = computeTax(
-      makeInputs({ fy: "2024-25", capitalGains: { ltcg112A_10: 500000 } })
+      makeInputs({ fy: "2024-25", salary: 400000, capitalGains: { ltcg112A_10: 500000 } })
     );
     // (5,00,000 - 1,25,000) @ 10%
     expect(r.taxOnLTCG112A_10).toBe(37500);
@@ -175,6 +177,7 @@ describe("BUG 3 — the 1,25,000 exemption u/s 112A across rate buckets", () => 
     const r = computeTax(
       makeInputs({
         fy: "2024-25",
+        salary: 400000,
         capitalGains: { ltcg112A_125: 50000, ltcg112A_10: 500000 },
       })
     );
@@ -189,6 +192,7 @@ describe("BUG 3 — the 1,25,000 exemption u/s 112A across rate buckets", () => 
     const r = computeTax(
       makeInputs({
         fy: "2024-25",
+        salary: 400000,
         capitalGains: { ltcg112A_125: 1000000, ltcg112A_10: 1000000 },
       })
     );
@@ -205,7 +209,9 @@ describe("BUG 3 — the 1,25,000 exemption u/s 112A across rate buckets", () => 
   });
 
   it("applies the exemption in FY 2025-26 too", () => {
-    const r = computeTax(makeInputs({ capitalGains: { ltcg112A_125: 300000 } }));
+    const r = computeTax(
+      makeInputs({ salary: 475000, capitalGains: { ltcg112A_125: 300000 } })
+    );
     expect(r.taxOnLTCG112A_125).toBe(21875); // (3,00,000 - 1,25,000) @ 12.5%
   });
 });
@@ -303,15 +309,17 @@ describe("BUG 1 — LTCG u/s 112 must not be taxed at slab rates", () => {
 
   it("charges the pre-23-July-2024 bucket at 20% with indexation", () => {
     const r = computeTax(
-      makeInputs({ fy: "2024-25", capitalGains: { ltcgOther_20: 1000000 } })
+      makeInputs({ fy: "2024-25", salary: 400000, capitalGains: { ltcgOther_20: 1000000 } })
     );
     expect(r.taxOnLTCGOther_20).toBe(200000);
-    expect(r.normalIncome).toBe(0);
-    expect(r.taxOnNormalIncome).toBe(0);
+    // Salary only, at slab: the s.112 gain stays out of the slab base.
+    expect(r.normalIncome).toBe(325000);
   });
 
   it("gives s.112 LTCG no 1,25,000 exemption — that belongs to s.112A", () => {
-    const r = computeTax(makeInputs({ capitalGains: { ltcgOther_125: 1000000 } }));
+    const r = computeTax(
+      makeInputs({ salary: 475000, capitalGains: { ltcgOther_125: 1000000 } })
+    );
     expect(r.taxOnLTCGOther_125).toBe(125000); // full amount @ 12.5%
     expect(r.ltcg112AExemptionUsed).toBe(0);
   });
@@ -352,11 +360,13 @@ describe("BUG 1 — LTCG u/s 112 must not be taxed at slab rates", () => {
     const r = computeTax(
       makeInputs({
         fy: "2024-25",
+        salary: 400000,
         capitalGains: { ltcgOther_125: 100000, ltcgOther_20: 200000 },
       })
     );
     expect(r.capitalGainsIncome).toBe(300000);
-    expect(r.totalTaxBeforeSurcharge).toBe(12500 + 40000);
+    expect(r.taxOnLTCGOther_125).toBe(12500);
+    expect(r.taxOnLTCGOther_20).toBe(40000);
   });
 });
 
@@ -395,12 +405,14 @@ describe("edge cases ported from the .mjs harnesses", () => {
 
   it("keeps the 112A exemption boundary exact", () => {
     expect(
-      computeTax(makeInputs({ capitalGains: { ltcg112A_125: 125000 } }))
-        .taxOnLTCG112A_125
+      computeTax(
+        makeInputs({ salary: 475000, capitalGains: { ltcg112A_125: 125000 } })
+      ).taxOnLTCG112A_125
     ).toBe(0);
     expect(
-      computeTax(makeInputs({ capitalGains: { ltcg112A_125: 125100 } }))
-        .taxOnLTCG112A_125
+      computeTax(
+        makeInputs({ salary: 475000, capitalGains: { ltcg112A_125: 125100 } })
+      ).taxOnLTCG112A_125
     ).toBe(13); // 100 @ 12.5%
   });
 
@@ -506,5 +518,105 @@ describe("surcharge marginal relief invariants", () => {
     expect(at1Cr.totalIncome).toBe(10000000);
     expect(justOver.totalIncome).toBe(10005000);
     expect(justOver.grossTaxLiability).toBeGreaterThanOrEqual(at1Cr.grossTaxLiability);
+  });
+});
+
+describe("basic exemption set off against special-rate gains", () => {
+  // Provisos to s.111A(1), s.112(1)(a) and s.112A(2): for a resident individual
+  // or HUF, where total income as reduced by the specially-taxed gains falls
+  // short of the basic exemption, the gains are reduced by that shortfall
+  // before their rate applies. The basic exemption is not forfeited just
+  // because someone's income happens to be capital gains.
+  it("sets the unused exemption against s.111A STCG", () => {
+    const r = computeTax(makeInputs({ capitalGains: { stcg111A_20: 500000 } }));
+    // (5,00,000 - 4,00,000) @ 20% = 20,000, not 1,00,000
+    expect(r.basicExemptionUsedAgainstCG).toBe(400000);
+    expect(r.taxOnSTCG111A_20).toBe(20000);
+    expect(r.grossTaxLiability).toBe(20800);
+  });
+
+  it("sets it against s.112 LTCG at 20% with indexation", () => {
+    const r = computeTax(
+      makeInputs({ fy: "2024-25", capitalGains: { ltcgOther_20: 1000000 } })
+    );
+    // (10,00,000 - 3,00,000) @ 20% = 1,40,000, not 2,00,000
+    expect(r.taxOnLTCGOther_20).toBe(140000);
+    expect(r.grossTaxLiability).toBe(145600);
+  });
+
+  it("sets it against s.112 LTCG at 12.5%", () => {
+    const r = computeTax(makeInputs({ capitalGains: { ltcgOther_125: 1000000 } }));
+    // (10,00,000 - 4,00,000) @ 12.5% = 75,000, not 1,25,000
+    expect(r.taxOnLTCGOther_125).toBe(75000);
+    expect(r.grossTaxLiability).toBe(78000);
+  });
+
+  it("applies it after the 1,25,000 s.112A allowance, not instead of it", () => {
+    const r = computeTax(
+      makeInputs({ fy: "2024-25", capitalGains: { ltcg112A_10: 500000 } })
+    );
+    // 5,00,000 - 1,25,000 (112A) - 3,00,000 (basic exemption) = 75,000 @ 10%
+    expect(r.ltcg112AExemptionUsed).toBe(125000);
+    expect(r.basicExemptionUsedAgainstCG).toBe(300000);
+    expect(r.taxOnLTCG112A_10).toBe(7500);
+  });
+
+  it("absorbs only the shortfall when other income is partial", () => {
+    // Salary 2,75,000 -> net 2,00,000, so 2,00,000 of exemption is unused.
+    const r = computeTax(
+      makeInputs({ salary: 275000, capitalGains: { ltcgOther_125: 1000000 } })
+    );
+    expect(r.basicExemptionUsedAgainstCG).toBe(200000);
+    expect(r.taxOnLTCGOther_125).toBe(100000); // 8,00,000 @ 12.5%
+  });
+
+  it("gives nothing away once other income exhausts the exemption", () => {
+    const r = computeTax(
+      makeInputs({ salary: 2000000, capitalGains: { ltcgOther_125: 5000000 } })
+    );
+    expect(r.basicExemptionUsedAgainstCG).toBe(0);
+    expect(r.taxOnLTCGOther_125).toBe(625000);
+  });
+
+  it("spends the shortfall on the highest-taxed bucket first", () => {
+    const r = computeTax(
+      makeInputs({
+        capitalGains: { stcg111A_20: 300000, ltcg112A_10: 300000 },
+      })
+    );
+    // 4,00,000 of exemption: 3,00,000 wipes the 20% bucket, 1,00,000 goes to
+    // the 10% bucket after its 1,25,000 s.112A allowance (3,00,000 - 1,25,000
+    // = 1,75,000 chargeable, less 1,00,000 = 75,000 @ 10%).
+    expect(r.taxOnSTCG111A_20).toBe(0);
+    expect(r.taxOnLTCG112A_10).toBe(7500);
+    expect(r.basicExemptionUsedAgainstCG).toBe(400000);
+  });
+
+  it("denies the set-off to a non-resident", () => {
+    const resident = computeTax(makeInputs({ capitalGains: { stcg111A_20: 500000 } }));
+    const nri = computeTax(
+      makeInputs({ capitalGains: { stcg111A_20: 500000 }, residentialStatus: "nri" })
+    );
+
+    expect(resident.taxOnSTCG111A_20).toBe(20000);
+    expect(nri.basicExemptionUsedAgainstCG).toBe(0);
+    expect(nri.taxOnSTCG111A_20).toBe(100000);
+  });
+
+  it("leaves the CA-validated case alone — no exemption is unused there", () => {
+    const r = computeTax(
+      makeInputs({
+        fy: "2024-25",
+        houseProperty: 2362043,
+        capitalGains: {
+          stcg111A_20: 4765879,
+          stcg111A_15: 839056,
+          ltcg112A_125: 778098,
+          ltcg112A_10: 1887778,
+        },
+        otherSources: { savingsBankInterest: 79347, dividendIncome: 94224 },
+      })
+    );
+    expect(r.basicExemptionUsedAgainstCG).toBe(0);
   });
 });

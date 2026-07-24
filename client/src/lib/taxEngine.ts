@@ -144,6 +144,8 @@ export interface TaxComputation {
   // Tax on Special Rate Income
   /** Portion of the 1,25,000 s.112A exemption actually absorbed this year. */
   ltcg112AExemptionUsed: number;
+  /** Unused basic exemption set off against special-rate gains (resident only). */
+  basicExemptionUsedAgainstCG: number;
   taxOnSTCG111A_20: number;
   taxOnSTCG111A_15: number;
   taxOnLTCG112A_125: number;
@@ -351,10 +353,12 @@ export function computeTax(inputs: TaxInputs): TaxComputation {
   // ── Tax on Normal Income (Slab Rates) ──
   const { slabs: slabComputation, total: taxOnNormalIncome } = computeSlabTax(normalIncome, fy);
   
+  // s.87A and the basic-exemption provisos to ss.111A/112/112A are all confined
+  // to residents, so this gates several things below.
+  const isResidentIndividual = inputs.assesseeInfo.residentialStatus !== "nri";
+
   // ── Tax on Special Rate Capital Gains ──
-  const taxOnSTCG111A_20 = Math.round(inputs.capitalGains.stcg111A_20 * 0.20);
-  const taxOnSTCG111A_15 = Math.round(inputs.capitalGains.stcg111A_15 * 0.15);
-  
+  //
   // The 1,25,000 exemption u/s 112A is a single annual allowance across all
   // 112A long-term gains, not one allowance per rate bucket. Where FY 2024-25
   // splits those gains either side of 23 July 2024, allocate the exemption
@@ -373,18 +377,59 @@ export function computeTax(inputs: TaxInputs): TaxComputation {
   const ltcg112AExemptionUsed = exemptionAgainst125 + exemptionAgainst10;
 
   const ltcg112A_taxable_125 = inputs.capitalGains.ltcg112A_125 - exemptionAgainst125;
-  const taxOnLTCG112A_125 = Math.round(ltcg112A_taxable_125 * 0.125);
-
   const ltcg112A_taxable_10 = inputs.capitalGains.ltcg112A_10 - exemptionAgainst10;
-  const taxOnLTCG112A_10 = Math.round(ltcg112A_taxable_10 * 0.10);
 
-  // LTCG u/s 112 — property, unlisted shares, debt, gold. Charged at its own
-  // rate, not at slab rates, and it gets no 1,25,000 exemption (that lives in
-  // s.112A). The Finance (No.2) Act 2024 moved the rate to 12.5% without
-  // indexation for transfers on or after 23 July 2024; earlier transfers in
-  // FY 2024-25 stay at 20% with indexation.
-  const taxOnLTCGOther_125 = Math.round(inputs.capitalGains.ltcgOther_125 * 0.125);
-  const taxOnLTCGOther_20 = Math.round(inputs.capitalGains.ltcgOther_20 * 0.20);
+  // The specially-taxed buckets, richest rate first.
+  //
+  // LTCG u/s 112 — property, unlisted shares, debt, gold — is charged at its own
+  // rate rather than at slab rates, and gets no 1,25,000 exemption (that lives
+  // in s.112A). The Finance (No.2) Act 2024 moved it to 12.5% without indexation
+  // for transfers on or after 23 July 2024; earlier transfers stay at 20% with
+  // indexation.
+  const specialRateBuckets = [
+    { key: "stcg111A_20", amount: inputs.capitalGains.stcg111A_20, rate: 0.2 },
+    { key: "ltcgOther_20", amount: inputs.capitalGains.ltcgOther_20, rate: 0.2 },
+    { key: "stcg111A_15", amount: inputs.capitalGains.stcg111A_15, rate: 0.15 },
+    { key: "ltcg112A_125", amount: ltcg112A_taxable_125, rate: 0.125 },
+    { key: "ltcgOther_125", amount: inputs.capitalGains.ltcgOther_125, rate: 0.125 },
+    { key: "ltcg112A_10", amount: ltcg112A_taxable_10, rate: 0.1 },
+  ];
+
+  // The provisos to s.111A(1), s.112(1)(a) and s.112A(2) all say the same thing:
+  // for a RESIDENT individual or HUF, where total income as reduced by these
+  // specially-taxed gains falls short of the maximum amount not chargeable to
+  // tax, the gains are reduced by that shortfall before their rate is applied.
+  // In other words the basic exemption is not forfeited just because someone's
+  // income happens to be capital gains — which is exactly the position of a
+  // retiree living off a property sale.
+  //
+  // Non-residents get no such relief: s.112(1)(c) and the corresponding limbs
+  // carry no equivalent proviso.
+  //
+  // The shortfall is absorbed against the highest-taxed bucket first, the
+  // allocation most favourable to the assessee.
+  const basicExemptionLimit = NEW_REGIME_SLABS[fy].find(s => s.rate === 0)?.to ?? 0;
+  let unusedBasicExemption = isResidentIndividual
+    ? Math.max(0, basicExemptionLimit - normalIncome)
+    : 0;
+
+  const taxByBucket: Record<string, number> = {};
+  let basicExemptionUsedAgainstCG = 0;
+
+  for (const bucket of specialRateBuckets) {
+    const chargeable = Math.max(0, bucket.amount);
+    const absorbed = Math.min(chargeable, unusedBasicExemption);
+    unusedBasicExemption -= absorbed;
+    basicExemptionUsedAgainstCG += absorbed;
+    taxByBucket[bucket.key] = Math.round((chargeable - absorbed) * bucket.rate);
+  }
+
+  const taxOnSTCG111A_20 = taxByBucket.stcg111A_20;
+  const taxOnSTCG111A_15 = taxByBucket.stcg111A_15;
+  const taxOnLTCG112A_125 = taxByBucket.ltcg112A_125;
+  const taxOnLTCG112A_10 = taxByBucket.ltcg112A_10;
+  const taxOnLTCGOther_125 = taxByBucket.ltcgOther_125;
+  const taxOnLTCGOther_20 = taxByBucket.ltcgOther_20;
 
   const totalTaxBeforeSurcharge =
     taxOnNormalIncome +
@@ -413,7 +458,6 @@ export function computeTax(inputs: TaxInputs): TaxComputation {
   //
   // Non-residents are outside s.87A entirely.
   const rebateConfig = REBATE_87A[fy];
-  const isResidentIndividual = inputs.assesseeInfo.residentialStatus !== "nri";
   let rebate87A = 0;
   let rebate87AMarginalRelief = 0;
 
@@ -569,6 +613,7 @@ export function computeTax(inputs: TaxInputs): TaxComputation {
     slabComputation,
     taxOnNormalIncome,
     ltcg112AExemptionUsed,
+    basicExemptionUsedAgainstCG,
     taxOnSTCG111A_20,
     taxOnSTCG111A_15,
     taxOnLTCG112A_125,
