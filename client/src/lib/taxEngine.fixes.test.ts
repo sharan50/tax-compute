@@ -418,3 +418,93 @@ describe("edge cases ported from the .mjs harnesses", () => {
     expect(r.refundDue).toBe(0);
   });
 });
+
+describe("surcharge marginal relief invariants", () => {
+  const BUCKETS = [
+    "stcg111A_20",
+    "stcg111A_15",
+    "ltcg112A_125",
+    "ltcg112A_10",
+    "ltcgOther_125",
+    "ltcgOther_20",
+  ] as const;
+
+  // Fix 2 moved the 87A gate to total income, but the rebate logic is written
+  // twice — the second copy lives inside the marginal relief block, where it
+  // reconstructs the position at the threshold. Leaving that copy on the old
+  // normalIncome gate handed a phantom rebate to anyone whose slab income
+  // happened to sit under the 87A limit while their total income was over 50L,
+  // which made tax FALL as income rose.
+  it("never lets tax fall as income rises across a surcharge threshold", () => {
+    const failures: string[] = [];
+
+    for (const fy of ["2024-25", "2025-26"] as const) {
+      for (const bucket of BUCKETS) {
+        for (const salary of [500000, 1175000, 2000000]) {
+          for (const threshold of [5000000, 10000000, 20000000]) {
+            let prev = -1;
+            for (let delta = -20000; delta <= 60000; delta += 5000) {
+              const cg = threshold + delta - (salary - 75000);
+              if (cg <= 0) continue;
+
+              const r = computeTax(
+                makeInputs({ fy, salary, capitalGains: { [bucket]: cg } })
+              );
+              if (prev >= 0 && r.grossTaxLiability < prev - 1) {
+                failures.push(
+                  `${fy}/${bucket}/salary ${salary}: tax fell ${prev} -> ${r.grossTaxLiability} at total income ${r.totalIncome}`
+                );
+              }
+              prev = r.grossTaxLiability;
+            }
+          }
+        }
+      }
+    }
+
+    expect(failures).toEqual([]);
+  });
+
+  it("never relieves more surcharge than was charged", () => {
+    const failures: string[] = [];
+
+    for (const fy of ["2024-25", "2025-26"] as const) {
+      for (const bucket of BUCKETS) {
+        for (const threshold of [5000000, 10000000, 20000000]) {
+          for (let delta = 1000; delta <= 40000; delta += 3000) {
+            const r = computeTax(
+              makeInputs({
+                fy,
+                salary: 1175000,
+                capitalGains: { [bucket]: threshold + delta - 1100000 },
+              })
+            );
+            if (r.surchargeMarginalRelief > r.surchargeBeforeMarginalRelief) {
+              failures.push(
+                `${fy}/${bucket}: relief ${r.surchargeMarginalRelief} > surcharge ${r.surchargeBeforeMarginalRelief}`
+              );
+            }
+          }
+        }
+      }
+    }
+
+    expect(failures).toEqual([]);
+  });
+
+  it("grants no phantom 87A rebate when reconstructing the 1 crore threshold", () => {
+    // Salary 11,75,000 (normal income 11,00,000, under the 12L 87A limit) with
+    // enough LTCG to cross 1 crore. The threshold reconstruction must not treat
+    // that normal income as rebate-eligible.
+    const at1Cr = computeTax(
+      makeInputs({ salary: 1175000, capitalGains: { ltcg112A_125: 8900000 } })
+    );
+    const justOver = computeTax(
+      makeInputs({ salary: 1175000, capitalGains: { ltcg112A_125: 8905000 } })
+    );
+
+    expect(at1Cr.totalIncome).toBe(10000000);
+    expect(justOver.totalIncome).toBe(10005000);
+    expect(justOver.grossTaxLiability).toBeGreaterThanOrEqual(at1Cr.grossTaxLiability);
+  });
+});

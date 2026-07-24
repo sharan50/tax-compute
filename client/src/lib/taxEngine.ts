@@ -480,33 +480,55 @@ export function computeTax(inputs: TaxInputs): TaxComputation {
       
       // This is the relevant threshold — compute marginal relief
       const actualTaxPlusSurcharge = taxOnNormalAfterRebate + taxOnCG + surchargeBeforeMarginalRelief;
-      
-      // Compute tax+surcharge at threshold income
-      // Normal income at threshold: reduce by the excess over threshold
-      const normalIncomeAtThreshold = Math.max(0, normalIncome - (totalIncome - threshold));
+
+      // Reconstruct the position at exactly the threshold. The excess over the
+      // threshold comes off normal income first; whatever it cannot absorb has
+      // to come off the special-rate income, otherwise the notional taxpayer at
+      // the threshold is credited with more capital gains than they could have
+      // had — which understates the ceiling and overstates the relief.
+      const excessIncome = totalIncome - threshold;
+      const normalIncomeAtThreshold = Math.max(0, normalIncome - excessIncome);
       const { total: taxOnNormalAtThreshold } = computeSlabTax(normalIncomeAtThreshold, fy);
-      
-      // Rebate at threshold
-      let rebateAtThreshold = 0;
-      if (normalIncomeAtThreshold <= rebateConfig.limit) {
-        rebateAtThreshold = Math.min(taxOnNormalAtThreshold, rebateConfig.maxRebate);
-      }
+
+      const cgReduction = Math.max(0, excessIncome - normalIncome);
+      const cgAtThreshold = Math.max(0, specialRateIncome - cgReduction);
+      const taxOnCGAtThreshold =
+        specialRateIncome > 0
+          ? Math.round(taxOnCG * (cgAtThreshold / specialRateIncome))
+          : 0;
+
+      // Eligibility for the 87A rebate at the threshold is on TOTAL income at
+      // the threshold — which is the threshold itself, 50,00,000 or more, so no
+      // rebate can ever be due here. Gating this on normalIncomeAtThreshold, as
+      // it used to, granted a phantom rebate whenever slab income happened to
+      // sit under the 87A limit, and made tax fall as income rose.
+      const rebateAtThreshold =
+        isResidentIndividual && threshold <= rebateConfig.limit
+          ? Math.min(taxOnNormalAtThreshold, rebateConfig.maxRebate)
+          : 0;
       const taxOnNormalAfterRebateAtThreshold = Math.max(0, taxOnNormalAtThreshold - rebateAtThreshold);
-      
+
       // Surcharge at threshold uses the lower rate
       const surchargeOnNormalAtThreshold = Math.round(taxOnNormalAfterRebateAtThreshold * lowerRate);
       const cgSurchargeRateAtThreshold = Math.min(lowerRate, 0.15);
-      const surchargeOnCGAtThreshold = Math.round(taxOnCG * cgSurchargeRateAtThreshold);
-      
-      const taxPlusSurchargeAtThreshold = taxOnNormalAfterRebateAtThreshold + taxOnCG + surchargeOnNormalAtThreshold + surchargeOnCGAtThreshold;
-      
-      const excessIncome = totalIncome - threshold;
+      const surchargeOnCGAtThreshold = Math.round(taxOnCGAtThreshold * cgSurchargeRateAtThreshold);
+
+      const taxPlusSurchargeAtThreshold =
+        taxOnNormalAfterRebateAtThreshold +
+        taxOnCGAtThreshold +
+        surchargeOnNormalAtThreshold +
+        surchargeOnCGAtThreshold;
+
       const ceiling = taxPlusSurchargeAtThreshold + excessIncome;
-      
+
       if (actualTaxPlusSurcharge > ceiling) {
-        surchargeMarginalRelief = actualTaxPlusSurcharge - ceiling;
+        // Relief is a reduction OF the surcharge, so it can never exceed it.
+        surchargeMarginalRelief = Math.min(
+          actualTaxPlusSurcharge - ceiling,
+          surchargeBeforeMarginalRelief
+        );
       }
-      
+
       break; // Only the highest relevant threshold matters
     }
   }
