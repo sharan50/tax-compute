@@ -127,28 +127,50 @@ export default function ImportStep() {
 
     setPhase("triaging");
 
+    type AiClassification = {
+      id: string;
+      category: string;
+      taxRelevant: boolean;
+      confidence: string;
+      notes: string;
+    };
+
     try {
-      const result = await triageMutation.mutateAsync({
-        transactions: ambiguous.map(t => ({
-          id: t.id,
-          date: t.date,
-          narration: t.narration,
-          withdrawal: t.withdrawal,
-          deposit: t.deposit,
-        })),
-        accountHolder: summary.accountHolder,
-        bankName: summary.bankName,
-      });
+      // The API caps each request at 50 transactions (see shared/triage.ts)
+      // so a single call finishes inside Netlify's 10-second function limit.
+      // Larger statements go up in sequential chunks and the results merge.
+      const CHUNK_SIZE = 40;
+      const collected: AiClassification[] = [];
+      let requestError: string | undefined;
+
+      for (let i = 0; i < ambiguous.length; i += CHUNK_SIZE) {
+        const chunk = ambiguous.slice(i, i + CHUNK_SIZE);
+        const res = await triageMutation.mutateAsync({
+          transactions: chunk.map(t => ({
+            id: t.id,
+            date: t.date,
+            narration: t.narration,
+            withdrawal: t.withdrawal,
+            deposit: t.deposit,
+          })),
+          accountHolder: summary.accountHolder,
+          bankName: summary.bankName,
+        });
+        if (res.classifications?.length) {
+          collected.push(...(res.classifications as AiClassification[]));
+        }
+        if (res.error) {
+          // Configuration and rate-limit errors would repeat for every
+          // remaining chunk — stop early and surface what we have.
+          requestError = res.error;
+          break;
+        }
+      }
+
+      const result = { classifications: collected, error: requestError };
 
       if (result.classifications && result.classifications.length > 0) {
         // Apply AI classifications to the transactions
-        type AiClassification = {
-          id: string;
-          category: string;
-          taxRelevant: boolean;
-          confidence: string;
-          notes: string;
-        };
         const classMap = new Map(
           (result.classifications as AiClassification[]).map(c => [c.id, c])
         );
@@ -185,6 +207,9 @@ export default function ImportStep() {
           toast.success(`AI reclassified ${changes} transaction${changes > 1 ? "s" : ""}. Review the updated categories below.`);
         } else {
           toast.info("AI agrees with the current classifications. No changes made.");
+        }
+        if (result.error) {
+          toast.info(`Some transactions kept their rule-based category: ${result.error}`);
         }
       } else {
         setPhase("review");
