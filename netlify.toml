@@ -1,0 +1,25 @@
+# Netlify configuration for Tax Compute.
+#
+# The repo is a Manus-style full-stack app: the Vite client builds to
+# dist/public and an Express server (used only in local dev) would build to
+# dist. On Netlify we deploy the client as a static SPA and serve the small
+# /api/trpc surface from a serverless function (netlify/functions/api.mts).
+
+[build]
+  command = "vite build"
+  publish = "dist/public"
+
+[build.environment]
+  # Vite 7 requires Node 20.19+ / 22.12+.
+  NODE_VERSION = "22"
+
+[functions]
+  directory = "netlify/functions"
+
+# SPA fallback: the client router (wouter) owns all paths. The /api/trpc/*
+# routes are declared in-code by the function's config and take precedence
+# over this rule.
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200

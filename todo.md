@@ -18,6 +18,8 @@
 - [x] Frontend AI triage UI (classify button, review banner, AI tags)
 - [x] Write vitest tests for triage endpoint
 - [x] End-to-end testing and polish
+- [x] Netlify deployment: static SPA from dist/public + serverless /api/trpc
+      function (netlify.toml, netlify/functions/api.mts)
 - [x] Implement marginal relief on surcharge (incomes near 50L/1Cr/2Cr boundaries)
 - [x] Implement marginal relief on rebate 87A (FY 2025-26: incomes 12L-12.75L)
 - [x] Update computation step UI to display marginal relief details when applied
@@ -53,7 +55,10 @@ Fitness for use:
       DB has only a users table.
 - [ ] Old regime + side-by-side comparison — the question most taxpayers
       actually need answered.
-- [ ] The triage endpoint is a publicProcedure: unauthenticated and
-      unrate-limited, forwarding bank narrations to an LLM. protectedProcedure
-      already exists in server/_core/trpc.ts.
+- [ ] The triage endpoint is a publicProcedure. The Netlify function now has
+      a per-request batch cap (50), LLM output validation, a same-origin
+      check, and a best-effort per-instance rate damper — but no real auth or
+      cross-instance rate limiting. Before setting LLM_API_KEY in production,
+      set a spend limit with the LLM provider. protectedProcedure already
+      exists in server/_core/trpc.ts for the dev server.
 - [ ] Bank import is HDFC-Excel only; say so in the UI.

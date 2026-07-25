@@ -19,7 +19,9 @@ import OtherSourcesStep from "@/components/steps/OtherSourcesStep";
 import TDSStep from "@/components/steps/TDSStep";
 import ComputationStep from "@/components/steps/ComputationStep";
 
-const HERO_IMAGE = "https://d2xsxph8kpxj0f.cloudfront.net/310519663364015297/YujTc5r47ax4sAczWGvob5/hero-abstract-QQdJWTxp8YhcTXA6BAFXXF.webp";
+// Served from client/public — the previous Manus CDN copy of this artwork
+// now returns 403, so the asset lives in the repo.
+const HERO_IMAGE = "/hero-abstract.svg";
 
 function StepContent() {
   const { state } = useTaxForm();

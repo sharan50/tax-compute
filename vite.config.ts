@@ -5,10 +5,13 @@ import path from "node:path";
 import { defineConfig } from "vite";
 import { vitePluginManusRuntime } from "vite-plugin-manus-runtime";
 
-const plugins = [react(), tailwindcss(), jsxLocPlugin(), vitePluginManusRuntime()];
-
-export default defineConfig({
-  plugins,
+export default defineConfig(({ command }) => ({
+  // The jsx-loc and Manus runtime plugins are dev-time tooling for the Manus
+  // editor; production bundles (e.g. the Netlify deploy) must not ship them.
+  plugins:
+    command === "build"
+      ? [react(), tailwindcss()]
+      : [react(), tailwindcss(), jsxLocPlugin(), vitePluginManusRuntime()],
   resolve: {
     alias: {
       "@": path.resolve(import.meta.dirname, "client", "src"),
@@ -39,4 +42,4 @@ export default defineConfig({
       deny: ["**/.*"],
     },
   },
-});
+}));
