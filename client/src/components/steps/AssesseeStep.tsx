@@ -43,6 +43,13 @@ export default function AssesseeStep() {
                 <SelectItem value="2024-25">FY 2024-25 (AY 2025-26)</SelectItem>
               </SelectContent>
             </Select>
+            {assesseeInfo.financialYear === "2024-25" && (
+              <p className="text-xs text-muted-foreground italic mt-2">
+                Changing to FY 2025-26 clears the pre-23 July 2024 capital gains
+                figures (15% STCG, 10% LTCG, 20%-with-indexation), since those rates
+                do not exist in that year.
+              </p>
+            )}
           </div>
           <div>
             <label className="text-sm text-muted-foreground">Residential Status</label>

@@ -25,7 +25,13 @@ export default function HousePropertyStep() {
     [houseProperties]
   );
 
-  const totalIncome = computedProperties.reduce((sum, p) => sum + p.taxableIncome, 0);
+  // Intra-head set-off is allowed, so aggregate first — but a net loss cannot
+  // be set off against any other head under 115BAC, so the head contributes
+  // nil. Showing the raw negative here would tell the user it reduces tax on
+  // their other income, which the computation sheet correctly says it does not.
+  const grossTotalIncome = computedProperties.reduce((sum, p) => sum + p.taxableIncome, 0);
+  const totalIncome = Math.max(0, grossTotalIncome);
+  const lossDisallowed = Math.max(0, -grossTotalIncome);
 
   const updateProperty = (index: number, data: Partial<HouseProperty>) => {
     dispatch({ type: "UPDATE_PROPERTY", index, data });
@@ -143,8 +149,20 @@ export default function HousePropertyStep() {
                   label="Interest on Home Loan"
                   value={property.interestOnLoan || 0}
                   onChange={(v) => updateProperty(index, { interestOnLoan: v })}
-                  hint={property.type === "self-occupied" ? "Max ₹2,00,000" : "No limit"}
+                  hint={
+                    property.type === "self-occupied"
+                      ? "Not deductible under the new regime"
+                      : "No limit"
+                  }
                 />
+
+                {property.type === "self-occupied" && (property.interestOnLoan || 0) > 0 && (
+                  <p className="text-xs text-muted-foreground italic -mt-2">
+                    Interest on a self-occupied property is disallowed by section
+                    115BAC(2)(i). The ₹2,00,000 deduction is an old-regime benefit and
+                    is not available here, so this property contributes nil.
+                  </p>
+                )}
 
                 {/* Computed Summary for this property */}
                 {computed && (
@@ -160,6 +178,16 @@ export default function HousePropertyStep() {
                           <span className="font-mono tabular-nums">({formatINR(computed.standardDeduction)})</span>
                         </div>
                       </>
+                    )}
+                    {computed.interestDisallowed > 0 && (
+                      <div className="flex justify-between text-sm">
+                        <span className="text-muted-foreground">
+                          Interest disallowed u/s 115BAC
+                        </span>
+                        <span className="font-mono tabular-nums text-muted-foreground">
+                          ({formatINR(computed.interestDisallowed)})
+                        </span>
+                      </div>
                     )}
                     <div className="flex justify-between text-sm font-medium pt-1">
                       <span>Taxable Income</span>
@@ -185,6 +213,23 @@ export default function HousePropertyStep() {
 
         {houseProperties.length > 0 && (
           <div className="pt-6 border-t border-border">
+            {lossDisallowed > 0 && (
+              <>
+                <div className="flex justify-between items-baseline mb-2">
+                  <span className="text-sm text-muted-foreground">
+                    Net loss across properties
+                  </span>
+                  <span className="font-mono tabular-nums text-sm text-muted-foreground">
+                    {formatINR(grossTotalIncome)}
+                  </span>
+                </div>
+                <p className="text-xs text-muted-foreground italic mb-3">
+                  Under section 115BAC a house property loss cannot be set off against
+                  salary or any other head, and cannot be carried forward — so it does
+                  not reduce your tax and the head contributes nil.
+                </p>
+              </>
+            )}
             <div className="flex justify-between items-baseline">
               <span className="text-sm font-semibold">Total Income from House Property</span>
               <span className="font-mono tabular-nums text-base font-semibold text-primary">

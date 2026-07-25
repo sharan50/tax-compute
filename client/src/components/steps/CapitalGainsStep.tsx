@@ -73,24 +73,40 @@ export default function CapitalGainsStep() {
           <div className="space-y-5 pl-4 border-l-2 border-emerald-200">
             <CurrencyInput
               label="LTCG on Listed Securities @ 12.5% (u/s 112A, STT paid)"
-              hint={`Exemption of ₹1,25,000 applied automatically`}
+              hint={
+                fy === "2024-25"
+                  ? "Shares one ₹1,25,000 exemption with the 10% bucket below, applied here first"
+                  : "Exemption of ₹1,25,000 applied automatically"
+              }
               value={capitalGains.ltcg112A_125 || 0}
               onChange={(v) => update("ltcg112A_125", v)}
             />
             {fy === "2024-25" && (
               <CurrencyInput
                 label="LTCG on Listed Securities @ 10% (u/s 112A)"
-                hint="Pre-23 July 2024 / Grandfathered"
+                hint="Pre-23 July 2024 / Grandfathered — draws on whatever is left of the single ₹1,25,000 exemption"
                 value={capitalGains.ltcg112A_10 || 0}
                 onChange={(v) => update("ltcg112A_10", v)}
               />
             )}
             <CurrencyInput
-              label="LTCG on Other Assets @ 12.5%"
-              hint="Property, unlisted shares, etc."
-              value={capitalGains.ltcgOther || 0}
-              onChange={(v) => update("ltcgOther", v)}
+              label="LTCG on Other Assets @ 12.5% (u/s 112)"
+              hint={
+                fy === "2024-25"
+                  ? "Property, unlisted shares, debt, gold — transferred on/after 23 July 2024"
+                  : "Property, unlisted shares, debt, gold — no indexation"
+              }
+              value={capitalGains.ltcgOther_125 || 0}
+              onChange={(v) => update("ltcgOther_125", v)}
             />
+            {fy === "2024-25" && (
+              <CurrencyInput
+                label="LTCG on Other Assets @ 20% with indexation (u/s 112)"
+                hint="Pre-23 July 2024 — enter the indexed gain"
+                value={capitalGains.ltcgOther_20 || 0}
+                onChange={(v) => update("ltcgOther_20", v)}
+              />
+            )}
             <div className="flex justify-between items-baseline pt-3 border-t border-border/50">
               <span className="text-sm font-medium">Total LTCG</span>
               <span className="font-mono tabular-nums font-medium">{formatINR(computed.totalLTCG)}</span>

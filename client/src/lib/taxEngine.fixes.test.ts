@@ -1,0 +1,712 @@
+/**
+ * Regression tests for the six correctness bugs found in review.
+ *
+ * Each block states the statutory position it is enforcing, so the expected
+ * figures can be checked against a CA's treatment one at a time.
+ */
+
+import { describe, it, expect } from "vitest";
+import { computeTax, computeHouseProperty } from "./taxEngine";
+import { makeInputs } from "./taxEngine.fixtures";
+
+describe("BUG 6 — family pension deduction u/s 57(iia)", () => {
+  // The Finance (No.2) Act 2024 raised the new-regime cap from 15,000 to
+  // 25,000 with effect from AY 2025-26, i.e. both years this tool supports.
+  it("caps the deduction at 25,000, not 15,000 (FY 2025-26)", () => {
+    const r = computeTax(makeInputs({ otherSources: { familyPension: 300000 } }));
+    expect(r.familyPensionDeduction).toBe(25000);
+  });
+
+  it("caps the deduction at 25,000 for FY 2024-25 too", () => {
+    const r = computeTax(
+      makeInputs({ fy: "2024-25", otherSources: { familyPension: 300000 } })
+    );
+    expect(r.familyPensionDeduction).toBe(25000);
+  });
+
+  it("gives one-third when one-third is below the cap", () => {
+    const r = computeTax(makeInputs({ otherSources: { familyPension: 60000 } }));
+    expect(r.familyPensionDeduction).toBe(20000);
+  });
+
+  it("gives nothing when there is no family pension", () => {
+    const r = computeTax(makeInputs({ otherSources: { fdInterest: 500000 } }));
+    expect(r.familyPensionDeduction).toBe(0);
+  });
+
+  it("reduces total income by the deduction", () => {
+    const r = computeTax(makeInputs({ otherSources: { familyPension: 300000 } }));
+    expect(r.grossTotalIncome).toBe(300000);
+    expect(r.totalIncome).toBe(275000);
+  });
+});
+
+describe("BUG 4 — self-occupied house property interest under the new regime", () => {
+  // s.115BAC(2)(i) disallows the s.24(b) interest deduction on a self-occupied
+  // property. The 2,00,000 cap the engine was applying is an old-regime rule.
+  it("allows no interest deduction on a self-occupied property", () => {
+    const p = computeHouseProperty({ type: "self-occupied", interestOnLoan: 300000 });
+    expect(p.taxableIncome).toBe(0);
+    expect(p.interestDisallowed).toBe(300000);
+  });
+
+  it("does not reduce total income when a self-occupied loan is entered", () => {
+    const p = computeHouseProperty({ type: "self-occupied", interestOnLoan: 300000 });
+    const r = computeTax(
+      makeInputs({
+        salary: 2000000,
+        houseProperty: { properties: [p], totalIncome: p.taxableIncome },
+      })
+    );
+    expect(r.grossTotalIncome).toBe(1925000);
+    expect(r.housePropertyIncome).toBe(0);
+  });
+
+  it("keeps the annual value of a self-occupied property nil", () => {
+    const p = computeHouseProperty({ type: "self-occupied", interestOnLoan: 100000 });
+    expect(p.annualValue).toBe(0);
+    expect(p.standardDeduction).toBe(0);
+  });
+
+  it("still allows uncapped interest on a let-out property", () => {
+    // NAV 3,00,000 - 30% std deduction 90,000 - interest 5,00,000 = -2,90,000
+    const p = computeHouseProperty({
+      type: "let-out",
+      annualRent: 300000,
+      interestOnLoan: 500000,
+    });
+    expect(p.taxableIncome).toBe(-290000);
+    expect(p.interestDisallowed).toBe(0);
+  });
+
+  it("deducts municipal taxes before the 30% standard deduction", () => {
+    const p = computeHouseProperty({
+      type: "let-out",
+      annualRent: 1271900,
+      municipalTaxes: 196985,
+    });
+    expect(p.annualValue).toBe(1074915);
+    // 30% of 10,74,915 is exactly 3,22,474.50. Math.round takes it up to
+    // 3,22,475; the CA's sheet for this same property shows 3,22,474, i.e. it
+    // rounded the half down. That leaves a 1 rupee divergence on this property
+    // if it is entered through the UI rather than as a pre-aggregated total.
+    // Pinned here so the convention is a deliberate choice, not a surprise.
+    expect(p.standardDeduction).toBe(322475);
+    expect(p.taxableIncome).toBe(752440);
+  });
+});
+
+describe("BUG 5 — house property loss set-off under the new regime", () => {
+  // s.115BAC(2)(i) bars inter-head set-off of a house property loss;
+  // s.115BAC(2)(ii) bars carrying it forward. Intra-head set-off survives.
+  const letOut = (annualRent: number, interestOnLoan: number) =>
+    computeHouseProperty({ type: "let-out", annualRent, interestOnLoan });
+
+  it("does not let a house property loss reduce salary income", () => {
+    const p = letOut(300000, 900000); // 3,00,000 - 90,000 - 9,00,000 = -6,90,000
+    expect(p.taxableIncome).toBe(-690000);
+
+    const r = computeTax(
+      makeInputs({
+        salary: 2000000,
+        houseProperty: { properties: [p], totalIncome: p.taxableIncome },
+      })
+    );
+    expect(r.housePropertyIncomeGross).toBe(-690000);
+    expect(r.housePropertyLossDisallowed).toBe(690000);
+    expect(r.housePropertyIncome).toBe(0);
+    expect(r.grossTotalIncome).toBe(1925000); // salary only
+  });
+
+  it("still allows set-off between properties within the head", () => {
+    const profitable = letOut(2000000, 0); // 20,00,000 - 6,00,000 = 14,00,000
+    const lossy = letOut(300000, 900000); // -6,90,000
+    const total = profitable.taxableIncome + lossy.taxableIncome;
+
+    const r = computeTax(
+      makeInputs({
+        salary: 1000000,
+        houseProperty: { properties: [profitable, lossy], totalIncome: total },
+      })
+    );
+    expect(r.housePropertyIncome).toBe(710000); // 14,00,000 - 6,90,000
+    expect(r.housePropertyLossDisallowed).toBe(0);
+    expect(r.grossTotalIncome).toBe(925000 + 710000);
+  });
+
+  it("disallows only the net loss when the head aggregates to negative", () => {
+    const small = letOut(400000, 0); // 4,00,000 - 1,20,000 = 2,80,000
+    const lossy = letOut(300000, 900000); // -6,90,000
+    const total = small.taxableIncome + lossy.taxableIncome; // -4,10,000
+
+    const r = computeTax(
+      makeInputs({
+        salary: 2000000,
+        houseProperty: { properties: [small, lossy], totalIncome: total },
+      })
+    );
+    expect(r.housePropertyIncomeGross).toBe(-410000);
+    expect(r.housePropertyLossDisallowed).toBe(410000);
+    expect(r.housePropertyIncome).toBe(0);
+    expect(r.grossTotalIncome).toBe(1925000);
+  });
+
+  it("leaves a positive house property head untouched", () => {
+    const r = computeTax(makeInputs({ salary: 1000000, houseProperty: 500000 }));
+    expect(r.housePropertyIncome).toBe(500000);
+    expect(r.housePropertyLossDisallowed).toBe(0);
+    expect(r.grossTotalIncome).toBe(1425000);
+  });
+});
+
+describe("BUG 3 — the 1,25,000 exemption u/s 112A across rate buckets", () => {
+  // A single annual allowance across all 112A gains, applied to the
+  // higher-taxed bucket first.
+  // Each case carries enough salary to exhaust the basic exemption, so these
+  // assert the 112A allowance alone. The shortfall proviso is tested separately.
+  it("applies the exemption to the 10% bucket when there is no 12.5% gain", () => {
+    const r = computeTax(
+      makeInputs({ fy: "2024-25", salary: 400000, capitalGains: { ltcg112A_10: 500000 } })
+    );
+    // (5,00,000 - 1,25,000) @ 10%
+    expect(r.taxOnLTCG112A_10).toBe(37500);
+    expect(r.ltcg112AExemptionUsed).toBe(125000);
+  });
+
+  it("spills the unused remainder from the 12.5% bucket into the 10% bucket", () => {
+    const r = computeTax(
+      makeInputs({
+        fy: "2024-25",
+        salary: 400000,
+        capitalGains: { ltcg112A_125: 50000, ltcg112A_10: 500000 },
+      })
+    );
+    // 50,000 absorbed at 12.5% (nil taxable), remaining 75,000 against the 10%
+    // bucket: (5,00,000 - 75,000) @ 10% = 42,500
+    expect(r.taxOnLTCG112A_125).toBe(0);
+    expect(r.taxOnLTCG112A_10).toBe(42500);
+    expect(r.ltcg112AExemptionUsed).toBe(125000);
+  });
+
+  it("never grants more than one 1,25,000 allowance in total", () => {
+    const r = computeTax(
+      makeInputs({
+        fy: "2024-25",
+        salary: 400000,
+        capitalGains: { ltcg112A_125: 1000000, ltcg112A_10: 1000000 },
+      })
+    );
+    expect(r.ltcg112AExemptionUsed).toBe(125000);
+    // Whole exemption goes to the 12.5% bucket; the 10% bucket is taxed in full
+    expect(r.taxOnLTCG112A_125).toBe(109375); // (10,00,000 - 1,25,000) @ 12.5%
+    expect(r.taxOnLTCG112A_10).toBe(100000); // 10,00,000 @ 10%
+  });
+
+  it("absorbs only what the gain can bear", () => {
+    const r = computeTax(makeInputs({ capitalGains: { ltcg112A_125: 40000 } }));
+    expect(r.ltcg112AExemptionUsed).toBe(40000);
+    expect(r.taxOnLTCG112A_125).toBe(0);
+  });
+
+  it("applies the exemption in FY 2025-26 too", () => {
+    const r = computeTax(
+      makeInputs({ salary: 475000, capitalGains: { ltcg112A_125: 300000 } })
+    );
+    expect(r.taxOnLTCG112A_125).toBe(21875); // (3,00,000 - 1,25,000) @ 12.5%
+  });
+});
+
+describe("BUG 2 — s.87A rebate eligibility turns on total income", () => {
+  it("denies the rebate when capital gains push total income over the limit", () => {
+    const r = computeTax(
+      makeInputs({ salary: 1100000, capitalGains: { ltcg112A_125: 5000000 } })
+    );
+    expect(r.totalIncome).toBe(6025000);
+    expect(r.normalIncome).toBe(1025000);
+    expect(r.rebate87A).toBe(0); // previously granted 42,500
+  });
+
+  it("denies the rebate when a small STCG crosses the threshold", () => {
+    const r = computeTax(
+      makeInputs({ salary: 1275000, capitalGains: { stcg111A_20: 100000 } })
+    );
+    expect(r.totalIncome).toBe(1300000);
+    expect(r.rebate87A).toBe(0);
+  });
+
+  it("still gives the full rebate to a resident at exactly the limit", () => {
+    const r = computeTax(makeInputs({ salary: 1275000 }));
+    expect(r.totalIncome).toBe(1200000);
+    expect(r.rebate87A).toBe(60000);
+    expect(r.grossTaxLiability).toBe(0);
+  });
+
+  it("denies the rebate to a non-resident who would otherwise qualify", () => {
+    const resident = computeTax(makeInputs({ salary: 1275000 }));
+    const nri = computeTax(makeInputs({ salary: 1275000, residentialStatus: "nri" }));
+
+    expect(resident.rebate87A).toBe(60000);
+    expect(nri.rebate87A).toBe(0);
+    expect(nri.grossTaxLiability).toBe(62400); // 60,000 + 4% cess
+  });
+
+  it("keeps the rebate for resident senior citizens", () => {
+    const r = computeTax(
+      makeInputs({ salary: 1275000, residentialStatus: "resident-senior" })
+    );
+    expect(r.rebate87A).toBe(60000);
+  });
+
+  it("applies the total income gate for FY 2024-25 as well", () => {
+    const within = computeTax(makeInputs({ fy: "2024-25", salary: 775000 }));
+    expect(within.totalIncome).toBe(700000);
+    expect(within.rebate87A).toBe(20000);
+    expect(within.grossTaxLiability).toBe(0);
+
+    // This leg is what actually discriminates the two gates. Normal income is
+    // exactly at the 7,00,000 limit, so the old normalIncome gate would still
+    // grant the full 20,000; total income is 9,00,000, so no rebate is due.
+    const over = computeTax(
+      makeInputs({
+        fy: "2024-25",
+        salary: 775000,
+        capitalGains: { ltcg112A_125: 200000 },
+      })
+    );
+    expect(over.normalIncome).toBe(700000);
+    expect(over.totalIncome).toBe(900000);
+    expect(over.rebate87A).toBe(0);
+    expect(over.taxOnNormalIncome).toBe(20000);
+  });
+
+  it("measures marginal relief against total income, not normal income", () => {
+    // Normal income 12.05L, plus 10,000 of STCG => total income 12.15L.
+    // Excess over 12L is 15,000; slab tax on 12.05L is 60,750, so relief
+    // brings the slab tax down to the 15,000 excess.
+    const r = computeTax(
+      makeInputs({ salary: 1280000, capitalGains: { stcg111A_20: 10000 } })
+    );
+    expect(r.totalIncome).toBe(1215000);
+    expect(r.taxOnNormalIncome).toBe(60750);
+    expect(r.rebate87A).toBe(45750);
+    expect(r.rebate87AMarginalRelief).toBe(45750);
+  });
+});
+
+describe("BUG 1 — LTCG u/s 112 must not be taxed at slab rates", () => {
+  it("charges s.112 LTCG at 12.5%, not at the slab rate", () => {
+    const r = computeTax(
+      makeInputs({ salary: 2000000, capitalGains: { ltcgOther_125: 5000000 } })
+    );
+
+    // Slab base is salary only: 20,00,000 - 75,000 = 19,25,000
+    expect(r.normalIncome).toBe(1925000);
+    // 0-4L nil, 4-8L 20,000, 8-12L 40,000, 12-16L 60,000, 16-19.25L 65,000
+    expect(r.taxOnNormalIncome).toBe(185000);
+    expect(r.taxOnLTCGOther_125).toBe(625000); // 50,00,000 @ 12.5%
+
+    // Surcharge: total income 69,25,000 is over 50L, so 10% on both bases
+    expect(r.surchargeOnNormal).toBe(18500);
+    expect(r.surchargeOnCG).toBe(62500);
+    expect(r.cessAmount).toBe(35640);
+    expect(r.grossTaxLiability).toBe(926640); // was 18,96,180 at slab rates
+  });
+
+  it("charges the pre-23-July-2024 bucket at 20% with indexation", () => {
+    const r = computeTax(
+      makeInputs({ fy: "2024-25", salary: 400000, capitalGains: { ltcgOther_20: 1000000 } })
+    );
+    expect(r.taxOnLTCGOther_20).toBe(200000);
+    // Salary only, at slab: the s.112 gain stays out of the slab base.
+    expect(r.normalIncome).toBe(325000);
+  });
+
+  it("gives s.112 LTCG no 1,25,000 exemption — that belongs to s.112A", () => {
+    const r = computeTax(
+      makeInputs({ salary: 475000, capitalGains: { ltcgOther_125: 1000000 } })
+    );
+    expect(r.taxOnLTCGOther_125).toBe(125000); // full amount @ 12.5%
+    expect(r.ltcg112AExemptionUsed).toBe(0);
+  });
+
+  it("caps surcharge on s.112 LTCG at 15% above 2 crore", () => {
+    const r = computeTax(
+      makeInputs({ salary: 5000000, capitalGains: { ltcgOther_125: 20000000 } })
+    );
+    expect(r.totalIncome).toBe(24925000); // over 2 crore
+    expect(r.surchargeRate).toBe(0.25);
+    expect(r.surchargeRateCG).toBe(0.15);
+    // 2,00,00,000 @ 12.5% = 25,00,000, surcharge capped at 15% not 25%
+    expect(r.taxOnLTCGOther_125).toBe(2500000);
+    expect(r.surchargeOnCG).toBe(375000);
+  });
+
+  it("excludes s.112 LTCG from the 87A rebate base", () => {
+    // Normal income 4,25,000 — which bears 1,250, being 5% on the 25,000 above
+    // the 4,00,000 nil slab — plus 20,00,000 of s.112 LTCG. Total income is well
+    // over 12L, so no rebate is due at all.
+    const r = computeTax(
+      makeInputs({ salary: 500000, capitalGains: { ltcgOther_125: 2000000 } })
+    );
+    expect(r.totalIncome).toBe(2425000);
+    expect(r.taxOnNormalIncome).toBe(1250);
+    expect(r.rebate87A).toBe(0);
+    expect(r.taxOnLTCGOther_125).toBe(250000);
+  });
+
+  it("still taxes STCG on non-STT assets at slab rates", () => {
+    const r = computeTax(
+      makeInputs({ salary: 1000000, capitalGains: { stcgOther: 500000 } })
+    );
+    // stcgOther stays in the slab base: 9,25,000 + 5,00,000 = 14,25,000
+    expect(r.normalIncome).toBe(1425000);
+    expect(r.taxOnNormalIncome).toBe(93750);
+  });
+
+  it("counts both s.112 buckets in total capital gains", () => {
+    const r = computeTax(
+      makeInputs({
+        fy: "2024-25",
+        salary: 400000,
+        capitalGains: { ltcgOther_125: 100000, ltcgOther_20: 200000 },
+      })
+    );
+    expect(r.capitalGainsIncome).toBe(300000);
+    expect(r.taxOnLTCGOther_125).toBe(12500);
+    expect(r.taxOnLTCGOther_20).toBe(40000);
+  });
+});
+
+describe("edge cases ported from the .mjs harnesses", () => {
+  it("steps the surcharge rate at each threshold", () => {
+    const rateAt = (totalIncome: number) =>
+      computeTax(makeInputs({ salary: totalIncome + 75000 })).surchargeRate;
+
+    expect(rateAt(5000000)).toBe(0);
+    expect(rateAt(5000001)).toBe(0.1);
+    expect(rateAt(10000000)).toBe(0.1);
+    expect(rateAt(10000001)).toBe(0.15);
+    expect(rateAt(20000000)).toBe(0.15);
+    expect(rateAt(20000001)).toBe(0.25);
+  });
+
+  it("caps the capital gains surcharge rate at 15%", () => {
+    const cgRateAt = (totalIncome: number) =>
+      computeTax(makeInputs({ salary: totalIncome + 75000 })).surchargeRateCG;
+
+    expect(cgRateAt(5000001)).toBe(0.1);
+    expect(cgRateAt(10000001)).toBe(0.15);
+    expect(cgRateAt(30000000)).toBe(0.15);
+  });
+
+  it("computes a full FY 2025-26 salary case", () => {
+    const r = computeTax(makeInputs({ salary: 2500000 }));
+    expect(r.normalIncome).toBe(2425000);
+    // 4-8L 20,000 | 8-12L 40,000 | 12-16L 60,000 | 16-20L 80,000
+    // 20-24L 1,00,000 | 24-24.25L 7,500
+    expect(r.taxOnNormalIncome).toBe(307500);
+    expect(r.surchargeAmount).toBe(0);
+    expect(r.cessAmount).toBe(12300);
+    expect(r.grossTaxLiability).toBe(319800);
+  });
+
+  it("keeps the 112A exemption boundary exact", () => {
+    expect(
+      computeTax(
+        makeInputs({ salary: 475000, capitalGains: { ltcg112A_125: 125000 } })
+      ).taxOnLTCG112A_125
+    ).toBe(0);
+    expect(
+      computeTax(
+        makeInputs({ salary: 475000, capitalGains: { ltcg112A_125: 125100 } })
+      ).taxOnLTCG112A_125
+    ).toBe(13); // 100 @ 12.5%
+  });
+
+  it("nets TDS, advance tax and self-assessment tax against the liability", () => {
+    const r = computeTax(
+      makeInputs({
+        salary: 2500000,
+        tds: [{ section: "192", description: "Salary", amount: 200000 }],
+        advanceTax: 50000,
+        selfAssessmentTax: 25000,
+      })
+    );
+    expect(r.totalTaxesPaid).toBe(275000);
+    expect(r.netTaxPayable).toBe(319800 - 275000);
+    expect(r.refundDue).toBe(0);
+  });
+});
+
+describe("surcharge marginal relief invariants", () => {
+  const BUCKETS = [
+    "stcg111A_20",
+    "stcg111A_15",
+    "ltcg112A_125",
+    "ltcg112A_10",
+    "ltcgOther_125",
+    "ltcgOther_20",
+  ] as const;
+
+  // Fix 2 moved the 87A gate to total income, but the rebate logic is written
+  // twice — the second copy lives inside the marginal relief block, where it
+  // reconstructs the position at the threshold. Leaving that copy on the old
+  // normalIncome gate handed a phantom rebate to anyone whose slab income
+  // happened to sit under the 87A limit while their total income was over 50L,
+  // which made tax FALL as income rose.
+  it("never lets tax fall as income rises across a surcharge threshold", () => {
+    const failures: string[] = [];
+
+    for (const fy of ["2024-25", "2025-26"] as const) {
+      for (const bucket of BUCKETS) {
+        for (const salary of [500000, 1175000, 2000000]) {
+          for (const threshold of [5000000, 10000000, 20000000]) {
+            let prev = -1;
+            for (let delta = -20000; delta <= 60000; delta += 5000) {
+              const cg = threshold + delta - (salary - 75000);
+              if (cg <= 0) continue;
+
+              const r = computeTax(
+                makeInputs({ fy, salary, capitalGains: { [bucket]: cg } })
+              );
+              if (prev >= 0 && r.grossTaxLiability < prev - 1) {
+                failures.push(
+                  `${fy}/${bucket}/salary ${salary}: tax fell ${prev} -> ${r.grossTaxLiability} at total income ${r.totalIncome}`
+                );
+              }
+              prev = r.grossTaxLiability;
+            }
+          }
+        }
+      }
+    }
+
+    expect(failures).toEqual([]);
+  });
+
+  it("never relieves more surcharge than was charged", () => {
+    const failures: string[] = [];
+
+    for (const fy of ["2024-25", "2025-26"] as const) {
+      for (const bucket of BUCKETS) {
+        for (const threshold of [5000000, 10000000, 20000000]) {
+          for (let delta = 1000; delta <= 40000; delta += 3000) {
+            const r = computeTax(
+              makeInputs({
+                fy,
+                salary: 1175000,
+                capitalGains: { [bucket]: threshold + delta - 1100000 },
+              })
+            );
+            if (r.surchargeMarginalRelief > r.surchargeBeforeMarginalRelief) {
+              failures.push(
+                `${fy}/${bucket}: relief ${r.surchargeMarginalRelief} > surcharge ${r.surchargeBeforeMarginalRelief}`
+              );
+            }
+          }
+        }
+      }
+    }
+
+    expect(failures).toEqual([]);
+  });
+
+  it("grants no phantom 87A rebate when reconstructing the 1 crore threshold", () => {
+    // Salary 11,75,000 (normal income 11,00,000, under the 12L 87A limit) with
+    // enough LTCG to cross 1 crore. The threshold reconstruction must not treat
+    // that normal income as rebate-eligible.
+    const at1Cr = computeTax(
+      makeInputs({ salary: 1175000, capitalGains: { ltcg112A_125: 8900000 } })
+    );
+    const justOver = computeTax(
+      makeInputs({ salary: 1175000, capitalGains: { ltcg112A_125: 8905000 } })
+    );
+
+    expect(at1Cr.totalIncome).toBe(10000000);
+    expect(justOver.totalIncome).toBe(10005000);
+    expect(justOver.grossTaxLiability).toBeGreaterThanOrEqual(at1Cr.grossTaxLiability);
+  });
+});
+
+describe("basic exemption set off against special-rate gains", () => {
+  // Provisos to s.111A(1), s.112(1)(a) and s.112A(2): for a resident individual
+  // or HUF, where total income as reduced by the specially-taxed gains falls
+  // short of the basic exemption, the gains are reduced by that shortfall
+  // before their rate applies. The basic exemption is not forfeited just
+  // because someone's income happens to be capital gains.
+  it("sets the unused exemption against s.111A STCG", () => {
+    const r = computeTax(makeInputs({ capitalGains: { stcg111A_20: 500000 } }));
+    // (5,00,000 - 4,00,000) @ 20% = 20,000, not 1,00,000
+    expect(r.basicExemptionUsedAgainstCG).toBe(400000);
+    expect(r.taxOnSTCG111A_20).toBe(20000);
+    expect(r.grossTaxLiability).toBe(20800);
+  });
+
+  it("sets it against s.112 LTCG at 20% with indexation", () => {
+    const r = computeTax(
+      makeInputs({ fy: "2024-25", capitalGains: { ltcgOther_20: 1000000 } })
+    );
+    // (10,00,000 - 3,00,000) @ 20% = 1,40,000, not 2,00,000
+    expect(r.taxOnLTCGOther_20).toBe(140000);
+    expect(r.grossTaxLiability).toBe(145600);
+  });
+
+  it("sets it against s.112 LTCG at 12.5%", () => {
+    const r = computeTax(makeInputs({ capitalGains: { ltcgOther_125: 1000000 } }));
+    // (10,00,000 - 4,00,000) @ 12.5% = 75,000, not 1,25,000
+    expect(r.taxOnLTCGOther_125).toBe(75000);
+    expect(r.grossTaxLiability).toBe(78000);
+  });
+
+  it("applies it after the 1,25,000 s.112A allowance, not instead of it", () => {
+    const r = computeTax(
+      makeInputs({ fy: "2024-25", capitalGains: { ltcg112A_10: 500000 } })
+    );
+    // 5,00,000 - 1,25,000 (112A) - 3,00,000 (basic exemption) = 75,000 @ 10%
+    expect(r.ltcg112AExemptionUsed).toBe(125000);
+    expect(r.basicExemptionUsedAgainstCG).toBe(300000);
+    expect(r.taxOnLTCG112A_10).toBe(7500);
+  });
+
+  it("absorbs only the shortfall when other income is partial", () => {
+    // Salary 2,75,000 -> net 2,00,000, so 2,00,000 of exemption is unused.
+    const r = computeTax(
+      makeInputs({ salary: 275000, capitalGains: { ltcgOther_125: 1000000 } })
+    );
+    expect(r.basicExemptionUsedAgainstCG).toBe(200000);
+    expect(r.taxOnLTCGOther_125).toBe(100000); // 8,00,000 @ 12.5%
+  });
+
+  it("gives nothing away once other income exhausts the exemption", () => {
+    const r = computeTax(
+      makeInputs({ salary: 2000000, capitalGains: { ltcgOther_125: 5000000 } })
+    );
+    expect(r.basicExemptionUsedAgainstCG).toBe(0);
+    expect(r.taxOnLTCGOther_125).toBe(625000);
+  });
+
+  it("spends the shortfall on the highest-taxed bucket first", () => {
+    const r = computeTax(
+      makeInputs({
+        capitalGains: { stcg111A_20: 300000, ltcg112A_10: 300000 },
+      })
+    );
+    // 4,00,000 of exemption: 3,00,000 wipes the 20% bucket, 1,00,000 goes to
+    // the 10% bucket after its 1,25,000 s.112A allowance (3,00,000 - 1,25,000
+    // = 1,75,000 chargeable, less 1,00,000 = 75,000 @ 10%).
+    expect(r.taxOnSTCG111A_20).toBe(0);
+    expect(r.taxOnLTCG112A_10).toBe(7500);
+    expect(r.basicExemptionUsedAgainstCG).toBe(400000);
+  });
+
+  it("denies the set-off to a non-resident", () => {
+    const resident = computeTax(makeInputs({ capitalGains: { stcg111A_20: 500000 } }));
+    const nri = computeTax(
+      makeInputs({ capitalGains: { stcg111A_20: 500000 }, residentialStatus: "nri" })
+    );
+
+    expect(resident.taxOnSTCG111A_20).toBe(20000);
+    expect(nri.basicExemptionUsedAgainstCG).toBe(0);
+    expect(nri.taxOnSTCG111A_20).toBe(100000);
+  });
+
+  it("leaves the CA-validated case alone — no exemption is unused there", () => {
+    const r = computeTax(
+      makeInputs({
+        fy: "2024-25",
+        houseProperty: 2362043,
+        capitalGains: {
+          stcg111A_20: 4765879,
+          stcg111A_15: 839056,
+          ltcg112A_125: 778098,
+          ltcg112A_10: 1887778,
+        },
+        otherSources: { savingsBankInterest: 79347, dividendIncome: 94224 },
+      })
+    );
+    expect(r.basicExemptionUsedAgainstCG).toBe(0);
+  });
+});
+
+describe("gaps the adversarial review found in this suite", () => {
+  // "deemed-let-out" reaches the let-out branch only by falling through a
+  // condition that names "self-occupied". Correct today, one edit from silently
+  // flipping, and nothing would have noticed.
+  it("treats deemed-let-out like let-out, not like self-occupied", () => {
+    const deemed = computeHouseProperty({
+      type: "deemed-let-out",
+      annualRent: 600000,
+      municipalTaxes: 50000,
+      interestOnLoan: 100000,
+    });
+    const letOut = computeHouseProperty({
+      type: "let-out",
+      annualRent: 600000,
+      municipalTaxes: 50000,
+      interestOnLoan: 100000,
+    });
+
+    expect(deemed.annualValue).toBe(550000);
+    expect(deemed.standardDeduction).toBe(165000); // 30% of NAV
+    expect(deemed.taxableIncome).toBe(285000);
+    expect(deemed.interestDisallowed).toBe(0);
+    expect(deemed.taxableIncome).toBe(letOut.taxableIncome);
+  });
+
+  // Every other test exercises one fix. Three of them move total income, and
+  // total income is now both the 87A gate and the surcharge trigger, so they
+  // compose — and the composition can change the answer more than either alone.
+  it("composes the house property floor with the 87A total income gate", () => {
+    // Salary 12,75,000 -> normal income 12,00,000, exactly at the 87A limit.
+    // A let-out loss of 6,90,000 would, if set off, drop total income to
+    // 5,10,000 and leave the rebate intact either way. Floored instead, total
+    // income stays at 12,00,000 and the full rebate still applies.
+    const lossy = computeHouseProperty({
+      type: "let-out",
+      annualRent: 300000,
+      interestOnLoan: 900000,
+    });
+    const r = computeTax(
+      makeInputs({
+        salary: 1275000,
+        houseProperty: { properties: [lossy], totalIncome: lossy.taxableIncome },
+      })
+    );
+    expect(r.housePropertyLossDisallowed).toBe(690000);
+    expect(r.totalIncome).toBe(1200000);
+    expect(r.rebate87A).toBe(60000);
+    expect(r.grossTaxLiability).toBe(0);
+  });
+
+  it("composes the family pension deduction with the 87A total income gate", () => {
+    // Gross total income 12,20,000 is over the 12,00,000 limit, but the 25,000
+    // family pension deduction brings total income to 11,95,000 — under it. The
+    // gate is on total income, so the rebate is due. On the old 15,000 cap the
+    // total would have been 12,05,000 and the rebate lost.
+    const r = computeTax(
+      makeInputs({ salary: 1145000, otherSources: { familyPension: 150000 } })
+    );
+    expect(r.grossTotalIncome).toBe(1220000);
+    expect(r.familyPensionDeduction).toBe(25000);
+    expect(r.totalIncome).toBe(1195000);
+    expect(r.rebate87A).toBeGreaterThan(0);
+    expect(r.grossTaxLiability).toBe(0);
+  });
+
+  it("composes the self-occupied disallowance with the surcharge threshold", () => {
+    // Salary 51,75,000 -> total income 51,00,000, just over the 50L threshold.
+    // Under the old regime treatment a 2,00,000 self-occupied interest
+    // deduction would have pulled it to 49,00,000 and removed the surcharge
+    // entirely. Disallowed, the surcharge and its marginal relief both apply.
+    const so = computeHouseProperty({ type: "self-occupied", interestOnLoan: 300000 });
+    const r = computeTax(
+      makeInputs({
+        salary: 5175000,
+        houseProperty: { properties: [so], totalIncome: so.taxableIncome },
+      })
+    );
+    expect(r.totalIncome).toBe(5100000);
+    expect(r.surchargeRate).toBe(0.1);
+    expect(r.surchargeMarginalRelief).toBeGreaterThan(0);
+  });
+});
