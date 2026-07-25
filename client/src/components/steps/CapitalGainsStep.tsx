@@ -73,14 +73,18 @@ export default function CapitalGainsStep() {
           <div className="space-y-5 pl-4 border-l-2 border-emerald-200">
             <CurrencyInput
               label="LTCG on Listed Securities @ 12.5% (u/s 112A, STT paid)"
-              hint={`Exemption of ₹1,25,000 applied automatically`}
+              hint={
+                fy === "2024-25"
+                  ? "Shares one ₹1,25,000 exemption with the 10% bucket below, applied here first"
+                  : "Exemption of ₹1,25,000 applied automatically"
+              }
               value={capitalGains.ltcg112A_125 || 0}
               onChange={(v) => update("ltcg112A_125", v)}
             />
             {fy === "2024-25" && (
               <CurrencyInput
                 label="LTCG on Listed Securities @ 10% (u/s 112A)"
-                hint="Pre-23 July 2024 / Grandfathered"
+                hint="Pre-23 July 2024 / Grandfathered — draws on whatever is left of the single ₹1,25,000 exemption"
                 value={capitalGains.ltcg112A_10 || 0}
                 onChange={(v) => update("ltcg112A_10", v)}
               />

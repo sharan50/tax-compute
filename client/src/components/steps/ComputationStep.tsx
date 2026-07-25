@@ -235,7 +235,17 @@ export default function ComputationStep() {
         {/* Tax Computation */}
         <SectionTitle title="Computation of Tax on Total Income" />
         
-        <div className="mb-1">
+        {c.totalIncome - c.normalIncome > 0 && (
+          <Row
+            label="Less: Income charged at special rates (taxed separately below)"
+            amount={c.totalIncome - c.normalIncome}
+            negative
+            indent={1}
+            note="Capital gains under ss.111A, 112 and 112A carry their own rates and are excluded from the slab computation."
+          />
+        )}
+
+        <div className="mb-1 mt-2">
           <span className="text-xs text-muted-foreground font-mono">
             Tax on Normal Income (₹{formatINR(c.normalIncome)})
           </span>
@@ -320,6 +330,18 @@ export default function ComputationStep() {
         {c.rebate87A > 0 && (
           <Row label="Tax after Rebate" amount={c.taxAfterRebate} border />
         )}
+
+        {c.rebate87A === 0 &&
+          assesseeInfo.residentialStatus === "nri" &&
+          c.totalIncome <= REBATE_87A[fy].limit && (
+            <Row
+              label="Rebate u/s 87A"
+              amount="Not available"
+              indent={1}
+              muted
+              note={`Total income is within the ₹${rebateThreshold} threshold, but s.87A is available only to an individual resident in India. Residential status is set on the Assessee Details step.`}
+            />
+          )}
 
         {/* Surcharge */}
         {c.surchargeAmount > 0 || c.surchargeBeforeMarginalRelief > 0 ? (

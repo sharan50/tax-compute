@@ -179,6 +179,16 @@ export default function HousePropertyStep() {
                         </div>
                       </>
                     )}
+                    {computed.interestDisallowed > 0 && (
+                      <div className="flex justify-between text-sm">
+                        <span className="text-muted-foreground">
+                          Interest disallowed u/s 115BAC
+                        </span>
+                        <span className="font-mono tabular-nums text-muted-foreground">
+                          ({formatINR(computed.interestDisallowed)})
+                        </span>
+                      </div>
+                    )}
                     <div className="flex justify-between text-sm font-medium pt-1">
                       <span>Taxable Income</span>
                       <span className="font-mono tabular-nums text-primary">

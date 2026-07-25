@@ -263,15 +263,20 @@ describe("BUG 2 — s.87A rebate eligibility turns on total income", () => {
     expect(within.rebate87A).toBe(20000);
     expect(within.grossTaxLiability).toBe(0);
 
+    // This leg is what actually discriminates the two gates. Normal income is
+    // exactly at the 7,00,000 limit, so the old normalIncome gate would still
+    // grant the full 20,000; total income is 9,00,000, so no rebate is due.
     const over = computeTax(
       makeInputs({
         fy: "2024-25",
         salary: 775000,
-        otherSources: { fdInterest: 100000 },
+        capitalGains: { ltcg112A_125: 200000 },
       })
     );
-    expect(over.totalIncome).toBe(800000);
+    expect(over.normalIncome).toBe(700000);
+    expect(over.totalIncome).toBe(900000);
     expect(over.rebate87A).toBe(0);
+    expect(over.taxOnNormalIncome).toBe(20000);
   });
 
   it("measures marginal relief against total income, not normal income", () => {
@@ -337,12 +342,14 @@ describe("BUG 1 — LTCG u/s 112 must not be taxed at slab rates", () => {
   });
 
   it("excludes s.112 LTCG from the 87A rebate base", () => {
-    // Normal income 4,25,000 (nil tax), plus 20,00,000 of s.112 LTCG.
-    // Total income is over 12L so no rebate is due at all.
+    // Normal income 4,25,000 — which bears 1,250, being 5% on the 25,000 above
+    // the 4,00,000 nil slab — plus 20,00,000 of s.112 LTCG. Total income is well
+    // over 12L, so no rebate is due at all.
     const r = computeTax(
       makeInputs({ salary: 500000, capitalGains: { ltcgOther_125: 2000000 } })
     );
     expect(r.totalIncome).toBe(2425000);
+    expect(r.taxOnNormalIncome).toBe(1250);
     expect(r.rebate87A).toBe(0);
     expect(r.taxOnLTCGOther_125).toBe(250000);
   });
@@ -618,5 +625,88 @@ describe("basic exemption set off against special-rate gains", () => {
       })
     );
     expect(r.basicExemptionUsedAgainstCG).toBe(0);
+  });
+});
+
+describe("gaps the adversarial review found in this suite", () => {
+  // "deemed-let-out" reaches the let-out branch only by falling through a
+  // condition that names "self-occupied". Correct today, one edit from silently
+  // flipping, and nothing would have noticed.
+  it("treats deemed-let-out like let-out, not like self-occupied", () => {
+    const deemed = computeHouseProperty({
+      type: "deemed-let-out",
+      annualRent: 600000,
+      municipalTaxes: 50000,
+      interestOnLoan: 100000,
+    });
+    const letOut = computeHouseProperty({
+      type: "let-out",
+      annualRent: 600000,
+      municipalTaxes: 50000,
+      interestOnLoan: 100000,
+    });
+
+    expect(deemed.annualValue).toBe(550000);
+    expect(deemed.standardDeduction).toBe(165000); // 30% of NAV
+    expect(deemed.taxableIncome).toBe(285000);
+    expect(deemed.interestDisallowed).toBe(0);
+    expect(deemed.taxableIncome).toBe(letOut.taxableIncome);
+  });
+
+  // Every other test exercises one fix. Three of them move total income, and
+  // total income is now both the 87A gate and the surcharge trigger, so they
+  // compose — and the composition can change the answer more than either alone.
+  it("composes the house property floor with the 87A total income gate", () => {
+    // Salary 12,75,000 -> normal income 12,00,000, exactly at the 87A limit.
+    // A let-out loss of 6,90,000 would, if set off, drop total income to
+    // 5,10,000 and leave the rebate intact either way. Floored instead, total
+    // income stays at 12,00,000 and the full rebate still applies.
+    const lossy = computeHouseProperty({
+      type: "let-out",
+      annualRent: 300000,
+      interestOnLoan: 900000,
+    });
+    const r = computeTax(
+      makeInputs({
+        salary: 1275000,
+        houseProperty: { properties: [lossy], totalIncome: lossy.taxableIncome },
+      })
+    );
+    expect(r.housePropertyLossDisallowed).toBe(690000);
+    expect(r.totalIncome).toBe(1200000);
+    expect(r.rebate87A).toBe(60000);
+    expect(r.grossTaxLiability).toBe(0);
+  });
+
+  it("composes the family pension deduction with the 87A total income gate", () => {
+    // Gross total income 12,20,000 is over the 12,00,000 limit, but the 25,000
+    // family pension deduction brings total income to 11,95,000 — under it. The
+    // gate is on total income, so the rebate is due. On the old 15,000 cap the
+    // total would have been 12,05,000 and the rebate lost.
+    const r = computeTax(
+      makeInputs({ salary: 1145000, otherSources: { familyPension: 150000 } })
+    );
+    expect(r.grossTotalIncome).toBe(1220000);
+    expect(r.familyPensionDeduction).toBe(25000);
+    expect(r.totalIncome).toBe(1195000);
+    expect(r.rebate87A).toBeGreaterThan(0);
+    expect(r.grossTaxLiability).toBe(0);
+  });
+
+  it("composes the self-occupied disallowance with the surcharge threshold", () => {
+    // Salary 51,75,000 -> total income 51,00,000, just over the 50L threshold.
+    // Under the old regime treatment a 2,00,000 self-occupied interest
+    // deduction would have pulled it to 49,00,000 and removed the surcharge
+    // entirely. Disallowed, the surcharge and its marginal relief both apply.
+    const so = computeHouseProperty({ type: "self-occupied", interestOnLoan: 300000 });
+    const r = computeTax(
+      makeInputs({
+        salary: 5175000,
+        houseProperty: { properties: [so], totalIncome: so.taxableIncome },
+      })
+    );
+    expect(r.totalIncome).toBe(5100000);
+    expect(r.surchargeRate).toBe(0.1);
+    expect(r.surchargeMarginalRelief).toBeGreaterThan(0);
   });
 });
