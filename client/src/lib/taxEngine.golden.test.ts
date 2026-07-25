@@ -1,13 +1,21 @@
 /**
  * Golden regression tests for the tax engine.
  *
- * These lock in behaviour that was validated to the rupee against a real CA's
- * computation sheet (FY 2024-25) plus the marginal relief scenarios. They import
- * the real engine — the earlier .mjs harnesses hand-reimplemented the logic, so
- * they validated a transcription rather than the shipped code.
+ * These lock in behaviour validated to the rupee against a real CA's computation
+ * sheet (FY 2024-25) plus the marginal relief scenarios. They import the real
+ * engine — the earlier .mjs harnesses hand-reimplemented the logic, so they
+ * validated a transcription rather than the shipped code.
  *
  * Nothing here should change when a bug is fixed. If a test in this file breaks,
  * a fix has altered a case a CA already signed off on.
+ *
+ * Be clear about what that does NOT establish. Every test here also passes
+ * against the engine as it stood before the correctness fixes, because the CA's
+ * case exercises none of them: it has no LTCG u/s 112, no self-occupied
+ * property, no house property loss, no family pension, its income is far above
+ * the 87A threshold, and its normal income leaves no basic exemption unused.
+ * This file is a regression guard, not evidence that the fixes are right — that
+ * evidence lives in taxEngine.fixes.test.ts.
  */
 
 import { describe, it, expect } from "vitest";
